@@ -8,7 +8,7 @@ using ClaudeIslandWindows.Services;
 namespace ClaudeIslandWindows.ViewModels;
 
 public enum NotchStatus { Closed, Opened, Popping }
-public enum ContentType { Instances, Menu }
+public enum ContentType { Instances, Menu, Chat }
 
 public partial class NotchViewModel : ObservableObject
 {
@@ -29,6 +29,10 @@ public partial class NotchViewModel : ObservableObject
     private const double InstancesHeight = 320;
     private const double MenuWidth = 480;
     private const double MenuHeight = 420;
+    private const double ChatWidth = 600;
+    private const double ChatHeight = 580;
+
+    [ObservableProperty] private SessionState? _currentChatSession;
 
     private DispatcherTimer? _hoverTimer;
     private DispatcherTimer? _popTimer;
@@ -107,6 +111,22 @@ public partial class NotchViewModel : ObservableObject
     private void ToggleMenu()
     {
         CurrentContent = CurrentContent == ContentType.Menu ? ContentType.Instances : ContentType.Menu;
+        UpdateDimensions();
+    }
+
+    [RelayCommand]
+    private void ShowChat(SessionState session)
+    {
+        CurrentChatSession = session;
+        CurrentContent = ContentType.Chat;
+        UpdateDimensions();
+    }
+
+    [RelayCommand]
+    private void ExitChat()
+    {
+        CurrentChatSession = null;
+        CurrentContent = ContentType.Instances;
         UpdateDimensions();
     }
 

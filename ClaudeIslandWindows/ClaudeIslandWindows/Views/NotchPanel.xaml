@@ -176,6 +176,111 @@
                         </Button.Template>
                     </Button>
                 </StackPanel>
+
+                <!-- Chat view -->
+                <Grid Margin="0,4,0,0"
+                      Visibility="{Binding CurrentContent, Converter={StaticResource ContentVisibility}, ConverterParameter=Chat}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Chat header with back button -->
+                    <Grid Grid.Row="0" Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Content="&#x2190; Back"
+                                Background="Transparent" BorderBrush="Transparent"
+                                Foreground="#808080" FontSize="11"
+                                Padding="4,2" Cursor="Hand"
+                                Command="{Binding ExitChatCommand}">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}"
+                                            Padding="{TemplateBinding Padding}" Cursor="Hand">
+                                        <ContentPresenter />
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding CurrentChatSession.ProjectName}"
+                                   FontSize="13" FontWeight="SemiBold"
+                                   Foreground="#E0E0E0"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Center" />
+                    </Grid>
+
+                    <!-- Messages -->
+                    <ScrollViewer x:Name="ChatScroller" Grid.Row="1"
+                                  VerticalScrollBarVisibility="Auto">
+                        <StackPanel x:Name="ChatMessages" />
+                    </ScrollViewer>
+
+                    <!-- Approval bar (when waiting) -->
+                    <Border x:Name="ChatApprovalBar" Grid.Row="2"
+                            Background="#1A1A1A" CornerRadius="8"
+                            Padding="8,6" Margin="0,4,0,0"
+                            BorderBrush="#2A2A2A" BorderThickness="1"
+                            Visibility="Collapsed">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="ApprovalToolName" Grid.Column="0"
+                                       FontSize="12" Foreground="#FFB400"
+                                       FontFamily="Consolas"
+                                       VerticalAlignment="Center" />
+                            <Button Grid.Column="1" Content="Allow" Margin="4,0"
+                                    Background="#2D5A27" Foreground="#90EE90"
+                                    Padding="10,4" FontSize="11"
+                                    Click="OnChatApprove" />
+                            <Button Grid.Column="2" Content="Deny"
+                                    Background="#5A2727" Foreground="#EE9090"
+                                    Padding="10,4" FontSize="11"
+                                    Click="OnChatDeny" />
+                        </Grid>
+                    </Border>
+
+                    <!-- Input bar -->
+                    <Grid Grid.Row="3" Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="#1A1A1A"
+                                CornerRadius="8" BorderBrush="#333333" BorderThickness="1">
+                            <TextBox x:Name="ChatInput"
+                                     Background="Transparent" Foreground="#E0E0E0"
+                                     BorderThickness="0"
+                                     FontFamily="Consolas"
+                                     Padding="8,6" FontSize="12"
+                                     CaretBrush="#E0E0E0"
+                                     KeyDown="OnChatInputKeyDown" />
+                        </Border>
+                        <Button Grid.Column="1" Content="&#x2191;"
+                                Background="#D9784F" Foreground="White"
+                                Padding="8,4" Margin="4,0,0,0"
+                                FontSize="14" FontWeight="Bold"
+                                Click="OnChatSend" Cursor="Hand">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}"
+                                            CornerRadius="6" Padding="{TemplateBinding Padding}"
+                                            Cursor="Hand">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </Grid>
+                </Grid>
             </Grid>
         </Grid>
     </Grid>
