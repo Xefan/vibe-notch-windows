@@ -47,12 +47,8 @@ public partial class NotchPanel : UserControl
     private void AnimateOpen()
     {
         var (targetW, targetH) = GetTargetSize();
-
         AnimateSize(targetW, targetH, OpenDuration, OpenEase);
-        NotchBorder.CornerRadius = new CornerRadius(0, 0, 24, 24);
-        AnimateShadow(20, 0.6, OpenDuration);
 
-        // Show content after size animation is underway
         ContentArea.Visibility = Visibility.Visible;
         ContentArea.BeginAnimation(OpacityProperty,
             new DoubleAnimation(0, 1, new Duration(TimeSpan.FromMilliseconds(200)))
@@ -71,40 +67,34 @@ public partial class NotchPanel : UserControl
 
     private void AnimateClose()
     {
-        // Fade out content quickly
-        var fadeOut = new DoubleAnimation(0, new Duration(TimeSpan.FromMilliseconds(120)));
-        fadeOut.Completed += (_, _) =>
-        {
-            ContentArea.Visibility = Visibility.Collapsed;
-            MenuButton.Visibility = Visibility.Collapsed;
-        };
-        ContentArea.BeginAnimation(OpacityProperty, fadeOut);
+        ContentArea.BeginAnimation(OpacityProperty,
+            new DoubleAnimation(0, new Duration(TimeSpan.FromMilliseconds(120))));
         MenuButton.BeginAnimation(OpacityProperty,
             new DoubleAnimation(0, new Duration(TimeSpan.FromMilliseconds(120))));
 
-        // Shrink after content fades
-        var widthAnim = new DoubleAnimation(ViewModels.NotchViewModel.ClosedWidth, CloseDuration)
-        {
-            BeginTime = TimeSpan.FromMilliseconds(80),
-            EasingFunction = CloseEase
-        };
         var heightAnim = new DoubleAnimation(ViewModels.NotchViewModel.ClosedHeight, CloseDuration)
         {
             BeginTime = TimeSpan.FromMilliseconds(80),
             EasingFunction = CloseEase
         };
-        BeginAnimation(WidthProperty, widthAnim);
-        BeginAnimation(HeightProperty, heightAnim);
+        heightAnim.Completed += (_, _) =>
+        {
+            ContentArea.Visibility = Visibility.Collapsed;
+            MenuButton.Visibility = Visibility.Collapsed;
+        };
 
-        NotchBorder.CornerRadius = new CornerRadius(0, 0, 14, 14);
-        AnimateShadow(12, 0.4, CloseDuration);
+        BeginAnimation(WidthProperty,
+            new DoubleAnimation(ViewModels.NotchViewModel.ClosedWidth, CloseDuration)
+            {
+                BeginTime = TimeSpan.FromMilliseconds(80),
+                EasingFunction = CloseEase
+            });
+        BeginAnimation(HeightProperty, heightAnim);
     }
 
     private void AnimatePop()
     {
         var expandW = new DoubleAnimation(ViewModels.NotchViewModel.ClosedWidth + 30,
-            new Duration(TimeSpan.FromMilliseconds(200))) { EasingFunction = OpenEase };
-        var expandH = new DoubleAnimation(ViewModels.NotchViewModel.ClosedHeight + 4,
             new Duration(TimeSpan.FromMilliseconds(200))) { EasingFunction = OpenEase };
 
         expandW.Completed += (_, _) =>
@@ -126,7 +116,9 @@ public partial class NotchPanel : UserControl
         };
 
         BeginAnimation(WidthProperty, expandW);
-        BeginAnimation(HeightProperty, expandH);
+        BeginAnimation(HeightProperty,
+            new DoubleAnimation(ViewModels.NotchViewModel.ClosedHeight + 4,
+                new Duration(TimeSpan.FromMilliseconds(200))) { EasingFunction = OpenEase });
     }
 
     private void AnimateContentSwitch()
@@ -148,12 +140,41 @@ public partial class NotchPanel : UserControl
         BeginAnimation(HeightProperty, new DoubleAnimation(targetHeight, duration) { EasingFunction = ease });
     }
 
-    private void AnimateShadow(double blurRadius, double opacity, Duration duration)
+    private void OnNotchSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        Shadow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.BlurRadiusProperty,
-            new DoubleAnimation(blurRadius, duration));
-        Shadow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.OpacityProperty,
-            new DoubleAnimation(opacity, duration));
+        UpdateNotchClip(e.NewSize.Width, e.NewSize.Height);
+    }
+
+    private void UpdateNotchClip(double w, double h)
+    {
+        if (w <= 0 || h <= 0) return;
+
+        const double tr = 6;  // top corner inward radius
+        const double br = 16; // bottom corner outward radius
+
+        var geo = new StreamGeometry();
+        using (var ctx = geo.Open())
+        {
+            ctx.BeginFigure(new Point(0, 0), true, true);
+            ctx.QuadraticBezierTo(new Point(tr, 0), new Point(tr, tr), false, true);
+            ctx.LineTo(new Point(tr, h - br), false, true);
+            ctx.QuadraticBezierTo(new Point(tr, h), new Point(tr + br, h), false, true);
+            ctx.LineTo(new Point(w - tr - br, h), false, true);
+            ctx.QuadraticBezierTo(new Point(w - tr, h), new Point(w - tr, h - br), false, true);
+            ctx.LineTo(new Point(w - tr, tr), false, true);
+            ctx.QuadraticBezierTo(new Point(w - tr, 0), new Point(w, 0), false, true);
+        }
+        geo.Freeze();
+        NotchBorder.Clip = geo;
+    }
+
+    private void OnHeaderClick(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is FrameworkElement fe && fe.Name == "MenuButton")
+            return;
+
+        ViewModel.ToggleCommand.Execute(null);
+        e.Handled = true;
     }
 
     private void OnQuitClick(object sender, RoutedEventArgs e)
@@ -164,16 +185,14 @@ public partial class NotchPanel : UserControl
 
     private void UpdateStatusDot()
     {
-        // Match macOS: only show indicator when actively processing or needing approval
-        // WaitingForInput sessions do NOT show the header dot
         if (ViewModel.PendingApprovalCount > 0)
         {
-            StatusDot.Fill = new SolidColorBrush(Color.FromRgb(217, 120, 87)); // Amber/coral
+            StatusDot.Fill = new SolidColorBrush(Color.FromRgb(217, 120, 87));
             StatusDot.Visibility = Visibility.Visible;
         }
         else if (ViewModel.IsProcessing)
         {
-            StatusDot.Fill = new SolidColorBrush(Color.FromRgb(255, 140, 0)); // Orange for processing
+            StatusDot.Fill = new SolidColorBrush(Color.FromRgb(255, 140, 0));
             StatusDot.Visibility = Visibility.Visible;
         }
         else
