@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using ClaudeIslandWindows.Services;
 
 namespace ClaudeIslandWindows.Views;
 
@@ -42,7 +43,11 @@ public partial class NotchPanel : UserControl
             Dispatcher.BeginInvoke(() => AnimateToState(ViewModel.Status));
         else if (e.PropertyName == nameof(ViewModels.NotchViewModel.CurrentContent)
                  && ViewModel.Status == ViewModels.NotchStatus.Opened)
+        {
             Dispatcher.BeginInvoke(AnimateContentSwitch);
+            if (ViewModel.CurrentContent == ViewModels.ContentType.Chat && ViewModel.CurrentChatSession is { } session)
+                Dispatcher.BeginInvoke(() => LoadChatMessages(session));
+        }
         else if (e.PropertyName is nameof(ViewModels.NotchViewModel.HasActiveSessions)
                  or nameof(ViewModels.NotchViewModel.IsProcessing)
                  or nameof(ViewModels.NotchViewModel.PendingApprovalCount))
@@ -146,6 +151,7 @@ public partial class NotchPanel : UserControl
     {
         ViewModels.ContentType.Instances => (480.0, 320.0),
         ViewModels.ContentType.Menu => (480.0, 420.0),
+        ViewModels.ContentType.Chat => (600.0, 580.0),
         _ => (480.0, 320.0)
     };
 
@@ -221,7 +227,125 @@ public partial class NotchPanel : UserControl
 
     private void OnSessionRowClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        // TODO: Open chat view for clicked session
+        if (sender is FrameworkElement fe && fe.Tag is Models.SessionState session)
+        {
+            ViewModel.ShowChatCommand.Execute(session);
+            LoadChatMessages(session);
+        }
         e.Handled = true;
+    }
+
+    private void LoadChatMessages(Models.SessionState session)
+    {
+        ChatMessages.Children.Clear();
+        var items = ConversationParser.Parse(session.SessionId, session.Cwd);
+
+        foreach (var item in items)
+        {
+            var bubble = CreateMessageBubble(item);
+            ChatMessages.Children.Add(bubble);
+        }
+
+        // Show approval bar if waiting
+        if (session.Phase.IsWaitingForApproval && session.Phase.Permission is { } ctx)
+        {
+            ApprovalToolName.Text = ctx.ToolName;
+            ChatApprovalBar.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            ChatApprovalBar.Visibility = Visibility.Collapsed;
+        }
+
+        // Scroll to bottom
+        Dispatcher.BeginInvoke(() => ChatScroller.ScrollToBottom(),
+            System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    private UIElement CreateMessageBubble(ConversationParser.ChatItem item)
+    {
+        var isUser = item.Role == "user";
+        var isTool = item.Role == "tool";
+
+        var text = new TextBlock
+        {
+            Text = item.Content,
+            FontSize = isTool ? 11 : 12,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = isUser
+                ? new SolidColorBrush(Color.FromRgb(224, 224, 224))
+                : isTool
+                    ? new SolidColorBrush(Color.FromRgb(160, 160, 160))
+                    : new SolidColorBrush(Color.FromRgb(200, 200, 200)),
+            FontFamily = new FontFamily("Consolas")
+        };
+
+        var border = new Border
+        {
+            Child = text,
+            Padding = new Thickness(10, 6, 10, 6),
+            Margin = new Thickness(
+                isUser ? 40 : 0,  // Left margin
+                1,
+                isUser ? 0 : 40,  // Right margin
+                1),
+            CornerRadius = new CornerRadius(10),
+            Background = isUser
+                ? new SolidColorBrush(Color.FromRgb(50, 50, 50))
+                : isTool
+                    ? new SolidColorBrush(Color.FromRgb(20, 25, 20))
+                    : new SolidColorBrush(Color.FromRgb(15, 15, 15)),
+            HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left
+        };
+
+        return border;
+    }
+
+    private void OnChatInputKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter && !string.IsNullOrWhiteSpace(ChatInput.Text))
+        {
+            SendChatMessage();
+            e.Handled = true;
+        }
+    }
+
+    private void OnChatSend(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(ChatInput.Text))
+            SendChatMessage();
+    }
+
+    private void SendChatMessage()
+    {
+        // TODO: Send message to Claude session via named pipe or process stdin
+        // For now, just show it in the chat
+        var text = ChatInput.Text.Trim();
+        ChatInput.Text = "";
+
+        var bubble = CreateMessageBubble(
+            new ConversationParser.ChatItem("user-input", "user", text, DateTime.UtcNow));
+        ChatMessages.Children.Add(bubble);
+
+        Dispatcher.BeginInvoke(() => ChatScroller.ScrollToBottom(),
+            System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    private void OnChatApprove(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.CurrentChatSession is { } session)
+        {
+            ViewModel.ApprovePermissionCommand.Execute(session);
+            ChatApprovalBar.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void OnChatDeny(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.CurrentChatSession is { } session)
+        {
+            ViewModel.DenyPermissionCommand.Execute(session);
+            ChatApprovalBar.Visibility = Visibility.Collapsed;
+        }
     }
 }
