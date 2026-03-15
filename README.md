@@ -1,54 +1,65 @@
 <div align="center">
-  <img src="ClaudeIsland/Assets.xcassets/AppIcon.appiconset/icon_128x128.png" alt="Logo" width="100" height="100">
-  <h3 align="center">Claude Island</h3>
+  <h3 align="center">Claude Island (for Windows)</h3>
   <p align="center">
-    A macOS menu bar app that brings Dynamic Island-style notifications to Claude Code CLI sessions.
+    A Windows port of the <a href="https://github.com/MarcinusX/claude-island">original macOS app</a> that brings Dynamic Island-style notifications to Claude Code CLI sessions.
     <br />
     <br />
-    <a href="https://github.com/farouqaldori/claude-island/releases/latest" target="_blank" rel="noopener noreferrer">
-      <img src="https://img.shields.io/github/v/release/farouqaldori/claude-island?style=rounded&color=white&labelColor=000000&label=release" alt="Release Version" />
+    <a href="https://github.com/Xefan/claude-island-windows/releases/latest" target="_blank" rel="noopener noreferrer">
+      <img src="https://img.shields.io/github/v/release/Xefan/claude-island-windows?style=rounded&color=white&labelColor=000000&label=release" alt="Release Version" />
     </a>
     <a href="#" target="_blank" rel="noopener noreferrer">
-      <img alt="GitHub Downloads" src="https://img.shields.io/github/downloads/farouqaldori/claude-island/total?style=rounded&color=white&labelColor=000000">
+      <img alt="GitHub Downloads" src="https://img.shields.io/github/downloads/Xefan/claude-island-windows/total?style=rounded&color=white&labelColor=000000">
     </a>
   </p>
 </div>
 
 ## Features
 
-- **Notch UI** — Animated overlay that expands from the MacBook notch
+- **Notch UI** — Animated overlay at the top-center of your screen that expands on hover or click
 - **Live Session Monitoring** — Track multiple Claude Code sessions in real-time
-- **Permission Approvals** — Approve or deny tool executions directly from the notch
-- **Chat History** — View full conversation history with markdown rendering
-- **Auto-Setup** — Hooks install automatically on first launch
+- **Permission Approvals** — Approve or deny tool executions directly from the overlay
+- **Auto-Setup** — Hooks install automatically on first launch, no configuration needed
+- **No Dependencies** — Uses PowerShell for hooks, no Python or other runtimes required
 
 ## Requirements
 
-- macOS 15.6+
+- Windows 10/11
+- .NET 10 Runtime
 - Claude Code CLI
 
 ## Install
 
-Download the latest release or build from source:
+Download the latest release from the [releases page](https://github.com/Xefan/claude-island-windows/releases/latest), or build from source:
 
 ```bash
-xcodebuild -scheme ClaudeIsland -configuration Release build
+cd claude-island-windows/ClaudeIslandWindows
+dotnet build
+dotnet run
 ```
 
 ## How It Works
 
-Claude Island installs hooks into `~/.claude/hooks/` that communicate session state via a Unix socket. The app listens for events and displays them in the notch overlay.
+Claude Island installs PowerShell hook scripts into `%HOMEPATH%\.claude\hooks` and registers them in `%HOMEPATH%\.claude\settings.json`. These hooks fire on Claude Code events (tool use, permission requests, session start/end, etc.) and communicate with the app via a Windows Named Pipe (`\\.\pipe\claude-island`).
 
-When Claude needs permission to run a tool, the notch expands with approve/deny buttons—no need to switch to the terminal.
+The app listens for events and displays session state in the overlay panel. When Claude needs permission to run a tool, the overlay expands with approve/deny buttons — no need to switch to the terminal.
+
+### Architecture
+
+```
+Claude Code → Hook Event → PowerShell Script → Named Pipe → Claude Island → UI
+                                                    ↑
+                                    Permission Response (approve/deny)
+```
 
 ## Analytics
 
-Claude Island uses Mixpanel to collect anonymous usage data:
+This Windows port does not collect any analytics or telemetry data.
 
-- **App Launched** — App version, build number, macOS version
-- **Session Started** — When a new Claude Code session is detected
+## Credits
 
-No personal data or conversation content is collected.
+Based on [Claude Island](https://github.com/MarcinusX/claude-island) by [Marcin Szalek](https://github.com/MarcinusX), originally built for macOS with Swift/SwiftUI.
+
+This Windows port is built with WPF/.NET and C#.
 
 ## License
 
