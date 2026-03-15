@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Shapes;
 using ClaudeIslandWindows.Services;
 
 namespace ClaudeIslandWindows.Views;
@@ -235,6 +236,10 @@ public partial class NotchPanel : UserControl
         e.Handled = true;
     }
 
+    private static readonly SolidColorBrush GreenDot = new(Color.FromRgb(100, 200, 100));
+    private static readonly SolidColorBrush OrangeDot = new(Color.FromRgb(217, 120, 87));
+    private static readonly SolidColorBrush WhiteDot = new(Color.FromRgb(180, 180, 180));
+
     private void LoadChatMessages(Models.SessionState session)
     {
         ChatMessages.Children.Clear();
@@ -242,8 +247,7 @@ public partial class NotchPanel : UserControl
 
         foreach (var item in items)
         {
-            var bubble = CreateMessageBubble(item);
-            ChatMessages.Children.Add(bubble);
+            ChatMessages.Children.Add(CreateMessageElement(item));
         }
 
         // Show approval bar if waiting
@@ -257,48 +261,138 @@ public partial class NotchPanel : UserControl
             ChatApprovalBar.Visibility = Visibility.Collapsed;
         }
 
-        // Scroll to bottom
         Dispatcher.BeginInvoke(() => ChatScroller.ScrollToBottom(),
             System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
-    private UIElement CreateMessageBubble(ConversationParser.ChatItem item)
+    private UIElement CreateMessageElement(ConversationParser.ChatItem item)
     {
-        var isUser = item.Role == "user";
-        var isTool = item.Role == "tool";
-
-        var text = new TextBlock
+        return item.Type switch
         {
-            Text = item.Content,
-            FontSize = isTool ? 11 : 12,
+            ConversationParser.ItemType.User => CreateUserMessage(item.Content),
+            ConversationParser.ItemType.Assistant => CreateAssistantMessage(item.Content),
+            ConversationParser.ItemType.ToolCall => CreateToolCallRow(item),
+            ConversationParser.ItemType.Thinking => CreateThinkingRow(item.Content),
+            _ => new Grid()
+        };
+    }
+
+    private UIElement CreateUserMessage(string text)
+    {
+        var textBlock = new TextBlock
+        {
+            Text = text,
+            FontSize = 12,
+            FontFamily = new FontFamily("Consolas"),
             TextWrapping = TextWrapping.Wrap,
-            Foreground = isUser
-                ? new SolidColorBrush(Color.FromRgb(224, 224, 224))
-                : isTool
-                    ? new SolidColorBrush(Color.FromRgb(160, 160, 160))
-                    : new SolidColorBrush(Color.FromRgb(200, 200, 200)),
-            FontFamily = new FontFamily("Consolas")
+            Foreground = Brushes.White
         };
 
-        var border = new Border
+        return new Border
         {
-            Child = text,
-            Padding = new Thickness(10, 6, 10, 6),
-            Margin = new Thickness(
-                isUser ? 40 : 0,  // Left margin
-                1,
-                isUser ? 0 : 40,  // Right margin
-                1),
-            CornerRadius = new CornerRadius(10),
-            Background = isUser
-                ? new SolidColorBrush(Color.FromRgb(50, 50, 50))
-                : isTool
-                    ? new SolidColorBrush(Color.FromRgb(20, 25, 20))
-                    : new SolidColorBrush(Color.FromRgb(15, 15, 15)),
-            HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left
+            Child = textBlock,
+            Padding = new Thickness(12, 8, 12, 8),
+            Margin = new Thickness(60, 2, 0, 2),
+            CornerRadius = new CornerRadius(14),
+            Background = new SolidColorBrush(Color.FromArgb(38, 255, 255, 255)), // white 15%
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+    }
+
+    private UIElement CreateAssistantMessage(string text)
+    {
+        var dot = new Ellipse
+        {
+            Width = 5, Height = 5,
+            Fill = WhiteDot,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 6, 6, 0)
         };
 
-        return border;
+        var textBlock = new TextBlock
+        {
+            Text = text,
+            FontSize = 12,
+            FontFamily = new FontFamily("Consolas"),
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new SolidColorBrush(Color.FromArgb(230, 255, 255, 255)) // white 90%
+        };
+
+        var panel = new StackPanel { Orientation = Orientation.Horizontal };
+        panel.Children.Add(dot);
+        panel.Children.Add(textBlock);
+
+        return new Border
+        {
+            Child = panel,
+            Margin = new Thickness(0, 2, 60, 2),
+            HorizontalAlignment = HorizontalAlignment.Left
+        };
+    }
+
+    private UIElement CreateToolCallRow(ConversationParser.ChatItem item)
+    {
+        var dotColor = item.IsCompleted ? GreenDot : OrangeDot;
+
+        var dot = new Ellipse
+        {
+            Width = 6, Height = 6,
+            Fill = dotColor,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 6, 0)
+        };
+
+        var toolName = new TextBlock
+        {
+            Text = item.ToolName ?? "tool",
+            FontSize = 11,
+            FontWeight = FontWeights.SemiBold,
+            FontFamily = new FontFamily("Consolas"),
+            Foreground = item.IsCompleted
+                ? new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)) // white 70%
+                : new SolidColorBrush(Color.FromArgb(153, 255, 255, 255)), // white 60%
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var inputText = new TextBlock
+        {
+            Text = item.ToolInput ?? "",
+            FontSize = 11,
+            FontFamily = new FontFamily("Consolas"),
+            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)), // white 40%
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(6, 0, 0, 0),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 1, 0, 1)
+        };
+        row.Children.Add(dot);
+        row.Children.Add(toolName);
+        row.Children.Add(inputText);
+
+        return row;
+    }
+
+    private UIElement CreateThinkingRow(string text)
+    {
+        var preview = text.Length > 60 ? text[..60] + "..." : text;
+
+        var label = new TextBlock
+        {
+            Text = $"thinking: {preview}",
+            FontSize = 10,
+            FontFamily = new FontFamily("Consolas"),
+            FontStyle = FontStyles.Italic,
+            Foreground = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255)), // white 30%
+            Margin = new Thickness(12, 1, 0, 1),
+            TextTrimming = TextTrimming.CharacterEllipsis
+        };
+
+        return label;
     }
 
     private void OnChatInputKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -323,9 +417,7 @@ public partial class NotchPanel : UserControl
         var text = ChatInput.Text.Trim();
         ChatInput.Text = "";
 
-        var bubble = CreateMessageBubble(
-            new ConversationParser.ChatItem("user-input", "user", text, DateTime.UtcNow));
-        ChatMessages.Children.Add(bubble);
+        ChatMessages.Children.Add(CreateUserMessage(text));
 
         Dispatcher.BeginInvoke(() => ChatScroller.ScrollToBottom(),
             System.Windows.Threading.DispatcherPriority.Loaded);
