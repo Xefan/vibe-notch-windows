@@ -13,12 +13,27 @@ public partial class NotchPanel : UserControl
     private static readonly IEasingFunction OpenEase = new QuadraticEase { EasingMode = EasingMode.EaseOut };
     private static readonly IEasingFunction CloseEase = new QuadraticEase { EasingMode = EasingMode.EaseInOut };
 
+    // Matching macOS: · ✢ ✳ ∗ ✻ ✽ — star/asterisk variants creating a twinkle effect
+    private static readonly string[] SpinnerSymbols = ["·", "✳", "∗", "✶", "✳", "∗"];
+    private int _spinnerPhase;
+    private System.Windows.Threading.DispatcherTimer? _spinnerTimer;
+
     private ViewModels.NotchViewModel ViewModel => App.NotchViewModel;
 
     public NotchPanel()
     {
         InitializeComponent();
         ViewModel.PropertyChanged += OnViewModelChanged;
+
+        _spinnerTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(150)
+        };
+        _spinnerTimer.Tick += (_, _) =>
+        {
+            _spinnerPhase = (_spinnerPhase + 1) % SpinnerSymbols.Length;
+            SpinnerText.Text = SpinnerSymbols[_spinnerPhase];
+        };
     }
 
     private void OnViewModelChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -31,7 +46,7 @@ public partial class NotchPanel : UserControl
         else if (e.PropertyName is nameof(ViewModels.NotchViewModel.HasActiveSessions)
                  or nameof(ViewModels.NotchViewModel.IsProcessing)
                  or nameof(ViewModels.NotchViewModel.PendingApprovalCount))
-            Dispatcher.BeginInvoke(UpdateStatusDot);
+            Dispatcher.BeginInvoke(UpdateStatusIndicators);
     }
 
     private void AnimateToState(ViewModels.NotchStatus status)
@@ -183,21 +198,30 @@ public partial class NotchPanel : UserControl
         Application.Current.Shutdown();
     }
 
-    private void UpdateStatusDot()
+    private void UpdateStatusIndicators()
     {
-        if (ViewModel.PendingApprovalCount > 0)
+        if (ViewModel.IsProcessing || ViewModel.PendingApprovalCount > 0)
         {
-            StatusDot.Fill = new SolidColorBrush(Color.FromRgb(217, 120, 87));
-            StatusDot.Visibility = Visibility.Visible;
-        }
-        else if (ViewModel.IsProcessing)
-        {
-            StatusDot.Fill = new SolidColorBrush(Color.FromRgb(255, 140, 0));
-            StatusDot.Visibility = Visibility.Visible;
+            CrabIcon.Visibility = Visibility.Visible;
+            CrabIcon.IsAnimating = ViewModel.IsProcessing;
+            SpinnerText.Visibility = Visibility.Visible;
+            SpinnerText.Foreground = ViewModel.PendingApprovalCount > 0
+                ? new SolidColorBrush(Color.FromRgb(255, 180, 0))   // Amber for approval
+                : new SolidColorBrush(Color.FromRgb(217, 120, 87)); // Claude orange for processing
+            _spinnerTimer?.Start();
         }
         else
         {
-            StatusDot.Visibility = Visibility.Collapsed;
+            CrabIcon.Visibility = Visibility.Collapsed;
+            CrabIcon.IsAnimating = false;
+            SpinnerText.Visibility = Visibility.Collapsed;
+            _spinnerTimer?.Stop();
         }
+    }
+
+    private void OnSessionRowClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        // TODO: Open chat view for clicked session
+        e.Handled = true;
     }
 }
