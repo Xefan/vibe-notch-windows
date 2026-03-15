@@ -2,31 +2,29 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:ClaudeIslandWindows.ViewModels"
+             xmlns:controls="clr-namespace:ClaudeIslandWindows.Controls"
              x:Name="Root"
-             ClipToBounds="False"
              Width="196" Height="32">
 
-    <Grid>
-        <!-- Notch shape background -->
+    <Grid x:Name="NotchContainer">
+        <!-- Notch body, clipped to notch shape in code-behind -->
         <Border x:Name="NotchBorder"
                 Background="#000000"
-                CornerRadius="0,0,14,14">
-            <Border.Effect>
-                <DropShadowEffect x:Name="Shadow"
-                                  ShadowDepth="0" Opacity="0.4"
-                                  BlurRadius="12" Color="#000000" />
-            </Border.Effect>
-        </Border>
+                CornerRadius="0,0,16,16"
+                SizeChanged="OnNotchSizeChanged" />
 
         <!-- Content -->
-        <Grid Margin="8,4,8,4">
+        <Grid Margin="14,4,14,4" ClipToBounds="True">
             <Grid.RowDefinitions>
                 <RowDefinition Height="24" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- Header row -->
-            <Grid Grid.Row="0">
+            <!-- Header row (clickable to toggle) -->
+            <Grid Grid.Row="0" x:Name="HeaderRow"
+                  Background="Transparent"
+                  MouseLeftButtonDown="OnHeaderClick"
+                  Cursor="Hand">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />

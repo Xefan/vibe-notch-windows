@@ -118,6 +118,7 @@ public partial class NotchViewModel : ObservableObject
             App.PipeServer.RespondToPermission(ctx.ToolUseId, "allow");
             App.SessionStore.ProcessEvent(
                 new SessionEvent.PermissionApproved(session.SessionId, ctx.ToolUseId));
+            RefreshSessions(App.SessionStore);
         }
     }
 
@@ -129,6 +130,7 @@ public partial class NotchViewModel : ObservableObject
             App.PipeServer.RespondToPermission(ctx.ToolUseId, "deny", "Denied by user via Claude Island");
             App.SessionStore.ProcessEvent(
                 new SessionEvent.PermissionDenied(session.SessionId, ctx.ToolUseId, "Denied by user"));
+            RefreshSessions(App.SessionStore);
         }
     }
 

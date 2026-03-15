@@ -2,7 +2,6 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
-using ClaudeIslandWindows.ViewModels;
 
 namespace ClaudeIslandWindows.Views;
 
@@ -17,7 +16,7 @@ public partial class NotchWindow : Window
     [DllImport("user32.dll")]
     private static extern int SetWindowLong(nint hWnd, int nIndex, int dwNewLong);
 
-    private NotchViewModel ViewModel => App.NotchViewModel;
+    private ViewModels.NotchViewModel ViewModel => App.NotchViewModel;
 
     public NotchWindow()
     {
@@ -52,9 +51,4 @@ public partial class NotchWindow : Window
 
     private void OnMouseEnter(object sender, MouseEventArgs e) => ViewModel.OnMouseEnter();
     private void OnMouseLeave(object sender, MouseEventArgs e) => ViewModel.OnMouseLeave();
-
-    private void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        ViewModel.ToggleCommand.Execute(null);
-    }
 }

@@ -9,8 +9,12 @@ function Send-Event {
     param([hashtable]$State)
 
     try {
-        $pipe = New-Object System.IO.Pipes.NamedPipeClientStream(".", $PipeName, [System.IO.Pipes.PipeDirection]::InOut)
+        $pipe = New-Object System.IO.Pipes.NamedPipeClientStream(
+            ".", $PipeName,
+            [System.IO.Pipes.PipeDirection]::InOut,
+            [System.IO.Pipes.PipeOptions]::None)
         $pipe.Connect(2000)
+        $pipe.ReadMode = [System.IO.Pipes.PipeTransmissionMode]::Message
 
         $json = $State | ConvertTo-Json -Depth 10 -Compress
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
@@ -20,18 +24,22 @@ function Send-Event {
         # For permission requests, wait for response
         if ($State["status"] -eq "waiting_for_approval") {
             $buffer = [byte[]]::new(4096)
-            $pipe.ReadTimeout = $TimeoutSeconds * 1000
+            $ms = New-Object System.IO.MemoryStream
 
-            try {
+            do {
                 $bytesRead = $pipe.Read($buffer, 0, $buffer.Length)
                 if ($bytesRead -gt 0) {
-                    $responseJson = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $bytesRead)
-                    $pipe.Close()
-                    return ($responseJson | ConvertFrom-Json)
+                    $ms.Write($buffer, 0, $bytesRead)
                 }
-            } catch {
-                # Timeout or read error
+            } while (-not $pipe.IsMessageComplete)
+
+            if ($ms.Length -gt 0) {
+                $responseJson = [System.Text.Encoding]::UTF8.GetString($ms.ToArray())
+                $pipe.Close()
+                $ms.Dispose()
+                return ($responseJson | ConvertFrom-Json)
             }
+            $ms.Dispose()
         }
 
         $pipe.Close()
@@ -55,7 +63,11 @@ $cwd = if ($data.cwd) { $data.cwd } else { "" }
 $toolInput = $data.tool_input
 
 # Get parent process info
-$claudePid = (Get-Process -Id $PID).Parent.Id
+try {
+    $claudePid = (Get-Process -Id $PID).Parent.Id
+} catch {
+    $claudePid = 0
+}
 $processInfo = "$claudePid"
 
 # Build state object

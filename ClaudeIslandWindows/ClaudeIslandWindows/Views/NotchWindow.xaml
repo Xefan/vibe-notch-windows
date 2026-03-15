@@ -11,8 +11,7 @@
         ResizeMode="NoResize"
         SizeToContent="WidthAndHeight"
         MouseEnter="OnMouseEnter"
-        MouseLeave="OnMouseLeave"
-        MouseLeftButtonDown="OnMouseLeftButtonDown">
+        MouseLeave="OnMouseLeave">
 
     <views:NotchPanel x:Name="Panel" />
 </Window>

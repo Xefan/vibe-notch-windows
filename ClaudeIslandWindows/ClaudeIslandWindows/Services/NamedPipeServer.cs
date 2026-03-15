@@ -52,6 +52,7 @@ public sealed class NamedPipeServer
         {
             pending.PipeStream.Write(bytes, 0, bytes.Length);
             pending.PipeStream.Flush();
+            pending.PipeStream.WaitForPipeDrain();
         }
         catch { }
         finally { pending.PipeStream.Dispose(); }
@@ -96,39 +97,35 @@ public sealed class NamedPipeServer
     {
         while (!ct.IsCancellationRequested)
         {
+            // Use Message mode so reads return complete messages
             var pipe = new NamedPipeServerStream(
                 PipeName, PipeDirection.InOut,
                 NamedPipeServerStream.MaxAllowedServerInstances,
-                PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                PipeTransmissionMode.Message, PipeOptions.Asynchronous);
             try
             {
                 await pipe.WaitForConnectionAsync(ct);
-                _ = Task.Run(() => HandleClientAsync(pipe, ct), ct);
+                _ = Task.Run(() => HandleClientAsync(pipe), ct);
             }
             catch (OperationCanceledException) { pipe.Dispose(); break; }
             catch { pipe.Dispose(); }
         }
     }
 
-    private async Task HandleClientAsync(NamedPipeServerStream pipe, CancellationToken ct)
+    private async Task HandleClientAsync(NamedPipeServerStream pipe)
     {
         try
         {
+            // Read the complete message
             var buffer = new byte[131072];
             using var ms = new MemoryStream();
-            using var readCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            readCts.CancelAfter(500);
 
-            try
+            do
             {
-                int bytesRead;
-                while ((bytesRead = await pipe.ReadAsync(buffer.AsMemory(0, buffer.Length), readCts.Token)) > 0)
-                {
-                    ms.Write(buffer, 0, bytesRead);
-                    if (!pipe.IsConnected) break;
-                }
-            }
-            catch (OperationCanceledException) when (ms.Length > 0) { }
+                var bytesRead = await pipe.ReadAsync(buffer);
+                if (bytesRead == 0) break;
+                ms.Write(buffer, 0, bytesRead);
+            } while (!pipe.IsMessageComplete);
 
             if (ms.Length == 0) { pipe.Dispose(); return; }
 
@@ -148,6 +145,7 @@ public sealed class NamedPipeServer
                 var pending = new PendingPermission(evt.SessionId, toolUseId, pipe, evt, DateTime.UtcNow);
                 lock (_permissionsLock) { _pendingPermissions[toolUseId] = pending; }
                 _eventHandler?.Invoke(evt);
+                // Pipe stays open — response written later via RespondToPermission
             }
             else
             {
