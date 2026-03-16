@@ -39,9 +39,9 @@ public class PhaseTextConverter : IValueConverter
         if (value is not SessionPhase phase) return "Unknown";
         return phase.Kind switch
         {
-            SessionPhaseKind.WaitingForApproval => $"Needs approval: {phase.Permission?.ToolName ?? "tool"}",
+            SessionPhaseKind.WaitingForApproval => phase.Permission?.ToolName ?? "Needs approval",
             SessionPhaseKind.Processing => "Processing...",
-            SessionPhaseKind.WaitingForInput => "Waiting for input",
+            SessionPhaseKind.WaitingForInput => "Done — waiting for input",
             SessionPhaseKind.Compacting => "Compacting context...",
             SessionPhaseKind.Idle => "Idle",
             SessionPhaseKind.Ended => "Ended",

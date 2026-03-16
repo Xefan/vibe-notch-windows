@@ -88,8 +88,12 @@ public sealed class SessionStore
             session.Cwd = hookEvent.Cwd;
             session.ProjectName = SessionState.DeriveProjectName(hookEvent.Cwd);
         }
-        if (hookEvent.Pid.HasValue)
+        if (hookEvent.Pid is > 0)
             session.Pid = hookEvent.Pid;
+
+        // Track last tool for display
+        if (hookEvent.Tool != null)
+            session.LastToolName = hookEvent.Tool;
 
         if (newPhase.Kind == SessionPhaseKind.Ended)
         {

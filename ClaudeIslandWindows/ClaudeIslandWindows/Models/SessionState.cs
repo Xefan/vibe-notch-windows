@@ -7,6 +7,8 @@ public sealed class SessionState
     public string ProjectName { get; set; } = "";
     public int? Pid { get; set; }
     public SessionPhase Phase { get; set; } = SessionPhase.Idle;
+    public string? LastMessage { get; set; }
+    public string? LastToolName { get; set; }
     public DateTime LastActivity { get; set; } = DateTime.UtcNow;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
