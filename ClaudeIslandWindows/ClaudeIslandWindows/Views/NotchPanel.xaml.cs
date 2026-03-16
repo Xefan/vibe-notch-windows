@@ -22,6 +22,8 @@ public partial class NotchPanel : UserControl
 
     private ViewModels.NotchViewModel ViewModel => App.NotchViewModel;
 
+    private System.Windows.Threading.DispatcherTimer? _chatRefreshTimer;
+
     public NotchPanel()
     {
         InitializeComponent();
@@ -36,6 +38,21 @@ public partial class NotchPanel : UserControl
             _spinnerPhase = (_spinnerPhase + 1) % SpinnerSymbols.Length;
             SpinnerText.Text = SpinnerSymbols[_spinnerPhase];
         };
+
+        // Auto-refresh chat view every 2 seconds when visible
+        _chatRefreshTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(2)
+        };
+        _chatRefreshTimer.Tick += (_, _) =>
+        {
+            if (ViewModel.CurrentContent == ViewModels.ContentType.Chat &&
+                ViewModel.CurrentChatSession is { } session &&
+                ViewModel.Status == ViewModels.NotchStatus.Opened)
+            {
+                RefreshChatMessages(session);
+            }
+        };
     }
 
     private void OnViewModelChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -48,9 +65,12 @@ public partial class NotchPanel : UserControl
             Dispatcher.BeginInvoke(AnimateContentSwitch);
             if (ViewModel.CurrentContent == ViewModels.ContentType.Chat && ViewModel.CurrentChatSession is { } session)
                 Dispatcher.BeginInvoke(() => LoadChatMessages(session));
+            else
+                _chatRefreshTimer?.Stop();
         }
         else if (e.PropertyName is nameof(ViewModels.NotchViewModel.HasActiveSessions)
                  or nameof(ViewModels.NotchViewModel.IsProcessing)
+                 or nameof(ViewModels.NotchViewModel.HasWaitingForInput)
                  or nameof(ViewModels.NotchViewModel.PendingApprovalCount))
             Dispatcher.BeginInvoke(UpdateStatusIndicators);
     }
@@ -60,7 +80,7 @@ public partial class NotchPanel : UserControl
         switch (status)
         {
             case ViewModels.NotchStatus.Opened: AnimateOpen(); break;
-            case ViewModels.NotchStatus.Closed: AnimateClose(); break;
+            case ViewModels.NotchStatus.Closed: _chatRefreshTimer?.Stop(); AnimateClose(); break;
             case ViewModels.NotchStatus.Popping: AnimatePop(); break;
         }
     }
@@ -212,16 +232,27 @@ public partial class NotchPanel : UserControl
             CrabIcon.Visibility = Visibility.Visible;
             CrabIcon.IsAnimating = ViewModel.IsProcessing;
             SpinnerText.Visibility = Visibility.Visible;
+            CheckmarkIcon.Visibility = Visibility.Collapsed;
             SpinnerText.Foreground = ViewModel.PendingApprovalCount > 0
-                ? new SolidColorBrush(Color.FromRgb(255, 180, 0))   // Amber for approval
-                : new SolidColorBrush(Color.FromRgb(217, 120, 87)); // Claude orange for processing
+                ? new SolidColorBrush(Color.FromRgb(255, 180, 0))
+                : new SolidColorBrush(Color.FromRgb(217, 120, 87));
             _spinnerTimer?.Start();
+        }
+        else if (ViewModel.HasWaitingForInput)
+        {
+            // Show crab (static) + green checkmark
+            CrabIcon.Visibility = Visibility.Visible;
+            CrabIcon.IsAnimating = false;
+            SpinnerText.Visibility = Visibility.Collapsed;
+            CheckmarkIcon.Visibility = Visibility.Visible;
+            _spinnerTimer?.Stop();
         }
         else
         {
             CrabIcon.Visibility = Visibility.Collapsed;
             CrabIcon.IsAnimating = false;
             SpinnerText.Visibility = Visibility.Collapsed;
+            CheckmarkIcon.Visibility = Visibility.Collapsed;
             _spinnerTimer?.Stop();
         }
     }
@@ -240,17 +271,56 @@ public partial class NotchPanel : UserControl
     private static readonly SolidColorBrush OrangeDot = new(Color.FromRgb(217, 120, 87));
     private static readonly SolidColorBrush WhiteDot = new(Color.FromRgb(180, 180, 180));
 
+    private int _lastChatItemCount;
+
     private void LoadChatMessages(Models.SessionState session)
     {
         ChatMessages.Children.Clear();
         var items = ConversationParser.Parse(session.SessionId, session.Cwd);
+        _lastChatItemCount = items.Count;
 
         foreach (var item in items)
-        {
             ChatMessages.Children.Add(CreateMessageElement(item));
+
+        UpdateApprovalBar(session);
+
+        // Add processing indicator if actively processing
+        if (session.Phase.Kind is Models.SessionPhaseKind.Processing or Models.SessionPhaseKind.Compacting)
+            ChatMessages.Children.Add(CreateProcessingIndicator());
+
+        Dispatcher.BeginInvoke(() => ChatScroller.ScrollToBottom(),
+            System.Windows.Threading.DispatcherPriority.Loaded);
+
+        _chatRefreshTimer?.Start();
+    }
+
+    private void RefreshChatMessages(Models.SessionState session)
+    {
+        var items = ConversationParser.Parse(session.SessionId, session.Cwd);
+
+        // Only rebuild if message count changed
+        if (items.Count == _lastChatItemCount) return;
+        _lastChatItemCount = items.Count;
+
+        ChatMessages.Children.Clear();
+        foreach (var item in items)
+            ChatMessages.Children.Add(CreateMessageElement(item));
+
+        // Re-check session state from store for latest phase
+        var latest = App.SessionStore.GetSession(session.SessionId);
+        if (latest != null)
+        {
+            UpdateApprovalBar(latest);
+            if (latest.Phase.Kind is Models.SessionPhaseKind.Processing or Models.SessionPhaseKind.Compacting)
+                ChatMessages.Children.Add(CreateProcessingIndicator());
         }
 
-        // Show approval bar if waiting
+        Dispatcher.BeginInvoke(() => ChatScroller.ScrollToBottom(),
+            System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    private void UpdateApprovalBar(Models.SessionState session)
+    {
         if (session.Phase.IsWaitingForApproval && session.Phase.Permission is { } ctx)
         {
             ApprovalToolName.Text = ctx.ToolName;
@@ -260,9 +330,34 @@ public partial class NotchPanel : UserControl
         {
             ChatApprovalBar.Visibility = Visibility.Collapsed;
         }
+    }
 
-        Dispatcher.BeginInvoke(() => ChatScroller.ScrollToBottom(),
-            System.Windows.Threading.DispatcherPriority.Loaded);
+    private UIElement CreateProcessingIndicator()
+    {
+        var spinner = new Controls.SpinnerText
+        {
+            Foreground = OrangeDot,
+            Margin = new Thickness(0, 0, 6, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var text = new TextBlock
+        {
+            Text = "Processing...",
+            FontSize = 12,
+            FontFamily = new FontFamily("Consolas"),
+            Foreground = OrangeDot,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var panel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 4, 0, 4)
+        };
+        panel.Children.Add(spinner);
+        panel.Children.Add(text);
+        return panel;
     }
 
     private UIElement CreateMessageElement(ConversationParser.ChatItem item)
@@ -395,33 +490,6 @@ public partial class NotchPanel : UserControl
         return label;
     }
 
-    private void OnChatInputKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
-    {
-        if (e.Key == System.Windows.Input.Key.Enter && !string.IsNullOrWhiteSpace(ChatInput.Text))
-        {
-            SendChatMessage();
-            e.Handled = true;
-        }
-    }
-
-    private void OnChatSend(object sender, RoutedEventArgs e)
-    {
-        if (!string.IsNullOrWhiteSpace(ChatInput.Text))
-            SendChatMessage();
-    }
-
-    private void SendChatMessage()
-    {
-        // TODO: Send message to Claude session via named pipe or process stdin
-        // For now, just show it in the chat
-        var text = ChatInput.Text.Trim();
-        ChatInput.Text = "";
-
-        ChatMessages.Children.Add(CreateUserMessage(text));
-
-        Dispatcher.BeginInvoke(() => ChatScroller.ScrollToBottom(),
-            System.Windows.Threading.DispatcherPriority.Loaded);
-    }
 
     private void OnChatApprove(object sender, RoutedEventArgs e)
     {

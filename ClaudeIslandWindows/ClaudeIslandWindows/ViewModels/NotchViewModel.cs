@@ -19,6 +19,7 @@ public partial class NotchViewModel : ObservableObject
     [ObservableProperty] private double _panelHeight = ClosedHeight;
     [ObservableProperty] private bool _hasActiveSessions;
     [ObservableProperty] private bool _isProcessing;
+    [ObservableProperty] private bool _hasWaitingForInput;
     [ObservableProperty] private int _pendingApprovalCount;
 
     public ObservableCollection<SessionState> Sessions { get; } = new();
@@ -61,6 +62,7 @@ public partial class NotchViewModel : ObservableObject
         PendingApprovalCount = updated.Count(s => s.Phase.IsWaitingForApproval);
         HasActiveSessions = updated.Any(s => s.Phase.IsActive);
         IsProcessing = updated.Any(s => s.Phase.Kind is SessionPhaseKind.Processing or SessionPhaseKind.Compacting);
+        HasWaitingForInput = updated.Any(s => s.Phase.Kind == SessionPhaseKind.WaitingForInput);
 
         if (PendingApprovalCount > 0 && Status == NotchStatus.Closed)
             Pop();

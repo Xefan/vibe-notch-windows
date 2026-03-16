@@ -63,11 +63,10 @@ $cwd = if ($data.cwd) { $data.cwd } else { "" }
 $toolInput = $data.tool_input
 
 # Get parent process info
+$claudePid = $PID
 try {
-    $claudePid = (Get-Process -Id $PID).Parent.Id
-} catch {
-    $claudePid = 0
-}
+    $claudePid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
+} catch {}
 $processInfo = "$claudePid"
 
 # Build state object
