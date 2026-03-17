@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -7,15 +6,6 @@ namespace ClaudeIslandWindows.Views;
 
 public partial class NotchWindow : Window
 {
-    private const int GWL_EXSTYLE = -20;
-    private const int WS_EX_TOOLWINDOW = 0x00000080;
-
-    [DllImport("user32.dll")]
-    private static extern int GetWindowLong(nint hWnd, int nIndex);
-
-    [DllImport("user32.dll")]
-    private static extern int SetWindowLong(nint hWnd, int nIndex, int dwNewLong);
-
     private ViewModels.NotchViewModel ViewModel => App.NotchViewModel;
 
     public NotchWindow()
@@ -24,31 +14,22 @@ public partial class NotchWindow : Window
         DataContext = ViewModel;
 
         Loaded += OnLoaded;
-        SizeChanged += OnSizeChanged;
+        Deactivated += OnDeactivated;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        var hwnd = new WindowInteropHelper(this).Handle;
-        var exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-        SetWindowLong(hwnd, GWL_EXSTYLE, exStyle | WS_EX_TOOLWINDOW);
+        // Position centered at top of screen
+        var screen = SystemParameters.WorkArea;
+        Left = screen.Left + (screen.Width - Width) / 2;
+        Top = screen.Top;
 
-        PositionAtTopCenter();
         ViewModel.Initialize();
     }
 
-    private void OnSizeChanged(object sender, SizeChangedEventArgs e)
+    private void OnDeactivated(object? sender, EventArgs e)
     {
-        PositionAtTopCenter();
+        if (ViewModel.Status == ViewModels.NotchStatus.Opened)
+            ViewModel.CloseCommand.Execute(null);
     }
-
-    private void PositionAtTopCenter()
-    {
-        var screen = SystemParameters.WorkArea;
-        Left = screen.Left + (screen.Width - ActualWidth) / 2;
-        Top = screen.Top;
-    }
-
-    private void OnMouseEnter(object sender, MouseEventArgs e) => ViewModel.OnMouseEnter();
-    private void OnMouseLeave(object sender, MouseEventArgs e) => ViewModel.OnMouseLeave();
 }

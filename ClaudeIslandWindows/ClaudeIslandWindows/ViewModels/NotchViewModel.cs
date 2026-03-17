@@ -79,8 +79,7 @@ public partial class NotchViewModel : ObservableObject
     {
         IsHovered = false;
         _hoverTimer?.Stop();
-        if (Status == NotchStatus.Opened)
-            Close();
+        // Don't close on mouse leave — only close on explicit click outside
     }
 
     [RelayCommand]

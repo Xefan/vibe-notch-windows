@@ -15,50 +15,146 @@ public partial class NotchPanel : UserControl
     private static readonly IEasingFunction OpenEase = new QuadraticEase { EasingMode = EasingMode.EaseOut };
     private static readonly IEasingFunction CloseEase = new QuadraticEase { EasingMode = EasingMode.EaseInOut };
 
-    // Matching macOS: · ✢ ✳ ∗ ✻ ✽ — star/asterisk variants creating a twinkle effect
     private static readonly string[] SpinnerSymbols = ["·", "✳", "∗", "✶", "✳", "∗"];
     private int _spinnerPhase;
     private System.Windows.Threading.DispatcherTimer? _spinnerTimer;
+    private System.Windows.Threading.DispatcherTimer? _chatRefreshTimer;
+
+    // Current clip dimensions (animated)
+    private double _clipWidth = ViewModels.NotchViewModel.ClosedWidth;
+    private double _clipHeight = ViewModels.NotchViewModel.ClosedHeight;
+
+    // Content grid dimensions (change on content switch)
+    private double _gridWidth = 480;
+    private double _gridHeight = 320;
 
     private ViewModels.NotchViewModel ViewModel => App.NotchViewModel;
-
-    private System.Windows.Threading.DispatcherTimer? _chatRefreshTimer;
 
     public NotchPanel()
     {
         InitializeComponent();
         ViewModel.PropertyChanged += OnViewModelChanged;
 
-        _spinnerTimer = new System.Windows.Threading.DispatcherTimer
-        {
-            Interval = TimeSpan.FromMilliseconds(150)
-        };
+        _spinnerTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         _spinnerTimer.Tick += (_, _) =>
         {
             _spinnerPhase = (_spinnerPhase + 1) % SpinnerSymbols.Length;
             SpinnerText.Text = SpinnerSymbols[_spinnerPhase];
         };
 
-        // Auto-refresh chat view every 2 seconds when visible
-        _chatRefreshTimer = new System.Windows.Threading.DispatcherTimer
-        {
-            Interval = TimeSpan.FromSeconds(2)
-        };
+        _chatRefreshTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _chatRefreshTimer.Tick += (_, _) =>
         {
             if (ViewModel.CurrentContent == ViewModels.ContentType.Chat &&
                 ViewModel.CurrentChatSession is { } session &&
                 ViewModel.Status == ViewModels.NotchStatus.Opened)
-            {
                 RefreshChatMessages(session);
-            }
         };
+
+        ContentGrid.MouseEnter += (_, _) =>
+        {
+            ViewModel.OnMouseEnter();
+            AnimateShadow(1);
+        };
+        ContentGrid.MouseLeave += (_, _) =>
+        {
+            ViewModel.OnMouseLeave();
+            if (ViewModel.Status != ViewModels.NotchStatus.Opened)
+                AnimateShadow(0);
+        };
+
+        // Set initial clip with notch shape
+        UpdateClipRect(isFinal: true);
     }
+
+    private void UpdateClipRect(bool isFinal = false)
+    {
+        var x = (_gridWidth - _clipWidth) / 2;
+        var w = _clipWidth;
+        var h = _clipHeight;
+
+        if (w <= 0 || h <= 0) return;
+
+        const double tr = 6;
+        const double br = 16;
+
+        var geo = new StreamGeometry();
+        using (var ctx = geo.Open())
+        {
+            ctx.BeginFigure(new Point(x, 0), true, true);
+            ctx.QuadraticBezierTo(new Point(x + tr, 0), new Point(x + tr, tr), false, true);
+            ctx.LineTo(new Point(x + tr, h - br), false, true);
+            ctx.QuadraticBezierTo(new Point(x + tr, h), new Point(x + tr + br, h), false, true);
+            ctx.LineTo(new Point(x + w - tr - br, h), false, true);
+            ctx.QuadraticBezierTo(new Point(x + w - tr, h), new Point(x + w - tr, h - br), false, true);
+            ctx.LineTo(new Point(x + w - tr, tr), false, true);
+            ctx.QuadraticBezierTo(new Point(x + w - tr, 0), new Point(x + w, 0), false, true);
+        }
+        geo.Freeze();
+        ContentGrid.Clip = geo;
+    }
+
+    // --- Clip animation via DispatcherTimer ---
+    private double _animFromW, _animFromH, _animToW, _animToH;
+    private DateTime _animStart;
+    private double _animDurationMs;
+    private bool _animIsOpen;
+    private bool _animRunning;
+    private Action? _animCompleted;
+
+    private void AnimateClip(double toW, double toH, Duration duration, bool isOpen, Action? completed = null)
+    {
+        _animFromW = _clipWidth;
+        _animFromH = _clipHeight;
+        _animToW = toW;
+        _animToH = toH;
+        _animDurationMs = duration.TimeSpan.TotalMilliseconds;
+        _animIsOpen = isOpen;
+        _animCompleted = completed;
+        _animStart = DateTime.UtcNow;
+
+        if (!_animRunning)
+        {
+            _animRunning = true;
+            CompositionTarget.Rendering += OnRenderFrame;
+        }
+    }
+
+    private void OnRenderFrame(object? sender, EventArgs e)
+    {
+        var elapsed = (DateTime.UtcNow - _animStart).TotalMilliseconds;
+        var t = Math.Min(1.0, elapsed / _animDurationMs);
+
+        double eased;
+        if (_animIsOpen)
+            eased = 1 - (1 - t) * (1 - t);
+        else
+            eased = t < 0.5 ? 2 * t * t : 1 - Math.Pow(-2 * t + 2, 2) / 2;
+
+        _clipWidth = _animFromW + (_animToW - _animFromW) * eased;
+        _clipHeight = _animFromH + (_animToH - _animFromH) * eased;
+        UpdateClipRect();
+
+        if (t >= 1.0)
+        {
+            CompositionTarget.Rendering -= OnRenderFrame;
+            _animRunning = false;
+            _clipWidth = _animToW;
+            _clipHeight = _animToH;
+            UpdateClipRect(isFinal: true);
+            _animCompleted?.Invoke();
+        }
+    }
+
+    // --- State management ---
 
     private void OnViewModelChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(ViewModels.NotchViewModel.Status))
+        {
             Dispatcher.BeginInvoke(() => AnimateToState(ViewModel.Status));
+            Dispatcher.BeginInvoke(UpdateStatusIndicators);
+        }
         else if (e.PropertyName == nameof(ViewModels.NotchViewModel.CurrentContent)
                  && ViewModel.Status == ViewModels.NotchStatus.Opened)
         {
@@ -88,7 +184,19 @@ public partial class NotchPanel : UserControl
     private void AnimateOpen()
     {
         var (targetW, targetH) = GetTargetSize();
-        AnimateSize(targetW, targetH, OpenDuration, OpenEase);
+        _gridWidth = targetW;
+        _gridHeight = targetH;
+        ContentGrid.Width = targetW;
+        ContentGrid.Height = targetH;
+
+        AnimateClip(targetW, targetH, OpenDuration, true);
+        AnimateShadow(1);
+
+        // Slide crab/spinner from activity position to natural position
+        CrabTranslate.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(0, OpenDuration) { EasingFunction = OpenEase });
+        SpinnerTranslate.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(0, OpenDuration) { EasingFunction = OpenEase });
 
         ContentArea.Visibility = Visibility.Visible;
         ContentArea.BeginAnimation(OpacityProperty,
@@ -113,59 +221,50 @@ public partial class NotchPanel : UserControl
         MenuButton.BeginAnimation(OpacityProperty,
             new DoubleAnimation(0, new Duration(TimeSpan.FromMilliseconds(120))));
 
-        var heightAnim = new DoubleAnimation(ViewModels.NotchViewModel.ClosedHeight, CloseDuration)
-        {
-            BeginTime = TimeSpan.FromMilliseconds(80),
-            EasingFunction = CloseEase
-        };
-        heightAnim.Completed += (_, _) =>
-        {
-            ContentArea.Visibility = Visibility.Collapsed;
-            MenuButton.Visibility = Visibility.Collapsed;
-        };
+        AnimateShadow(0);
 
-        BeginAnimation(WidthProperty,
-            new DoubleAnimation(ViewModels.NotchViewModel.ClosedWidth, CloseDuration)
+        // If there's activity, slide crab/spinner back to centered position
+        if (ViewModel.IsProcessing || ViewModel.PendingApprovalCount > 0)
+        {
+            CrabTranslate.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(ActivityOffset + 3, CloseDuration) { EasingFunction = CloseEase });
+            SpinnerTranslate.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(-ActivityOffset, CloseDuration) { EasingFunction = CloseEase });
+        }
+
+        AnimateClip(ViewModels.NotchViewModel.ClosedWidth, ViewModels.NotchViewModel.ClosedHeight,
+            CloseDuration, false, () =>
             {
-                BeginTime = TimeSpan.FromMilliseconds(80),
-                EasingFunction = CloseEase
+                ContentArea.Visibility = Visibility.Collapsed;
+                MenuButton.Visibility = Visibility.Collapsed;
+                // Reset grid to expanded size for next open
+                _gridWidth = 480;
+                _gridHeight = 320;
+                ContentGrid.Width = 480;
+                ContentGrid.Height = 320;
             });
-        BeginAnimation(HeightProperty, heightAnim);
     }
 
     private void AnimatePop()
     {
-        var expandW = new DoubleAnimation(ViewModels.NotchViewModel.ClosedWidth + 30,
-            new Duration(TimeSpan.FromMilliseconds(200))) { EasingFunction = OpenEase };
-
-        expandW.Completed += (_, _) =>
-        {
-            BeginAnimation(WidthProperty,
-                new DoubleAnimation(ViewModels.NotchViewModel.ClosedWidth,
-                    new Duration(TimeSpan.FromMilliseconds(300)))
-                {
-                    BeginTime = TimeSpan.FromMilliseconds(100),
-                    EasingFunction = CloseEase
-                });
-            BeginAnimation(HeightProperty,
-                new DoubleAnimation(ViewModels.NotchViewModel.ClosedHeight,
-                    new Duration(TimeSpan.FromMilliseconds(300)))
-                {
-                    BeginTime = TimeSpan.FromMilliseconds(100),
-                    EasingFunction = CloseEase
-                });
-        };
-
-        BeginAnimation(WidthProperty, expandW);
-        BeginAnimation(HeightProperty,
-            new DoubleAnimation(ViewModels.NotchViewModel.ClosedHeight + 4,
-                new Duration(TimeSpan.FromMilliseconds(200))) { EasingFunction = OpenEase });
+        AnimateClip(ViewModels.NotchViewModel.ClosedWidth + 30,
+            ViewModels.NotchViewModel.ClosedHeight + 4,
+            new Duration(TimeSpan.FromMilliseconds(200)), true, () =>
+            {
+                AnimateClip(ViewModels.NotchViewModel.ClosedWidth,
+                    ViewModels.NotchViewModel.ClosedHeight,
+                    new Duration(TimeSpan.FromMilliseconds(300)), false);
+            });
     }
 
     private void AnimateContentSwitch()
     {
         var (targetW, targetH) = GetTargetSize();
-        AnimateSize(targetW, targetH, new Duration(TimeSpan.FromMilliseconds(250)), OpenEase);
+        _gridWidth = targetW;
+        _gridHeight = targetH;
+        ContentGrid.Width = targetW;
+        ContentGrid.Height = targetH;
+        AnimateClip(targetW, targetH, new Duration(TimeSpan.FromMilliseconds(250)), true);
     }
 
     private (double w, double h) GetTargetSize() => ViewModel.CurrentContent switch
@@ -176,45 +275,18 @@ public partial class NotchPanel : UserControl
         _ => (480.0, 320.0)
     };
 
-    private void AnimateSize(double targetWidth, double targetHeight, Duration duration, IEasingFunction ease)
+    private void AnimateShadow(double opacity)
     {
-        BeginAnimation(WidthProperty, new DoubleAnimation(targetWidth, duration) { EasingFunction = ease });
-        BeginAnimation(HeightProperty, new DoubleAnimation(targetHeight, duration) { EasingFunction = ease });
+        NotchShadow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.OpacityProperty,
+            new DoubleAnimation(opacity, new Duration(TimeSpan.FromMilliseconds(200))));
     }
 
-    private void OnNotchSizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        UpdateNotchClip(e.NewSize.Width, e.NewSize.Height);
-    }
-
-    private void UpdateNotchClip(double w, double h)
-    {
-        if (w <= 0 || h <= 0) return;
-
-        const double tr = 6;  // top corner inward radius
-        const double br = 16; // bottom corner outward radius
-
-        var geo = new StreamGeometry();
-        using (var ctx = geo.Open())
-        {
-            ctx.BeginFigure(new Point(0, 0), true, true);
-            ctx.QuadraticBezierTo(new Point(tr, 0), new Point(tr, tr), false, true);
-            ctx.LineTo(new Point(tr, h - br), false, true);
-            ctx.QuadraticBezierTo(new Point(tr, h), new Point(tr + br, h), false, true);
-            ctx.LineTo(new Point(w - tr - br, h), false, true);
-            ctx.QuadraticBezierTo(new Point(w - tr, h), new Point(w - tr, h - br), false, true);
-            ctx.LineTo(new Point(w - tr, tr), false, true);
-            ctx.QuadraticBezierTo(new Point(w - tr, 0), new Point(w, 0), false, true);
-        }
-        geo.Freeze();
-        NotchBorder.Clip = geo;
-    }
+    private void OnNotchSizeChanged(object sender, SizeChangedEventArgs e) { }
 
     private void OnHeaderClick(object sender, MouseButtonEventArgs e)
     {
         if (e.OriginalSource is FrameworkElement fe && fe.Name == "MenuButton")
             return;
-
         ViewModel.ToggleCommand.Execute(null);
         e.Handled = true;
     }
@@ -225,52 +297,42 @@ public partial class NotchPanel : UserControl
         Application.Current.Shutdown();
     }
 
+    // How far to translate the crab/spinner into the collapsed clip area
+    private const double ActivityOffset = 140;
+
     private void UpdateStatusIndicators()
     {
-        if (ViewModel.IsProcessing || ViewModel.PendingApprovalCount > 0)
+        var isOpened = ViewModel.Status == ViewModels.NotchStatus.Opened;
+        var hasActivity = ViewModel.IsProcessing || ViewModel.PendingApprovalCount > 0;
+
+        if (hasActivity)
         {
-            CrabIcon.Visibility = Visibility.Visible;
             CrabIcon.IsAnimating = ViewModel.IsProcessing;
             SpinnerText.Visibility = Visibility.Visible;
-            CheckmarkIcon.Visibility = Visibility.Collapsed;
             SpinnerText.Foreground = ViewModel.PendingApprovalCount > 0
                 ? new SolidColorBrush(Color.FromRgb(255, 180, 0))
                 : new SolidColorBrush(Color.FromRgb(217, 120, 87));
             _spinnerTimer?.Start();
-        }
-        else if (ViewModel.HasWaitingForInput)
-        {
-            // Show crab (static) + green checkmark
-            CrabIcon.Visibility = Visibility.Visible;
-            CrabIcon.IsAnimating = false;
-            SpinnerText.Visibility = Visibility.Collapsed;
-            CheckmarkIcon.Visibility = Visibility.Visible;
-            _spinnerTimer?.Stop();
+
+            // Position crab/spinner within collapsed clip when not expanded
+            if (!isOpened)
+            {
+                CrabTranslate.X = ActivityOffset + 3;
+                SpinnerTranslate.X = -ActivityOffset;
+            }
         }
         else
         {
-            CrabIcon.Visibility = Visibility.Collapsed;
             CrabIcon.IsAnimating = false;
             SpinnerText.Visibility = Visibility.Collapsed;
-            CheckmarkIcon.Visibility = Visibility.Collapsed;
             _spinnerTimer?.Stop();
         }
     }
 
-    private void OnSessionRowClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
-    {
-        if (sender is FrameworkElement fe && fe.Tag is Models.SessionState session)
-        {
-            ViewModel.ShowChatCommand.Execute(session);
-            LoadChatMessages(session);
-        }
-        e.Handled = true;
-    }
-
+    // --- Chat view ---
     private static readonly SolidColorBrush GreenDot = new(Color.FromRgb(100, 200, 100));
     private static readonly SolidColorBrush OrangeDot = new(Color.FromRgb(217, 120, 87));
     private static readonly SolidColorBrush WhiteDot = new(Color.FromRgb(180, 180, 180));
-
     private int _lastChatItemCount;
 
     private void LoadChatMessages(Models.SessionState session)
@@ -278,35 +340,22 @@ public partial class NotchPanel : UserControl
         ChatMessages.Children.Clear();
         var items = ConversationParser.Parse(session.SessionId, session.Cwd);
         _lastChatItemCount = items.Count;
-
-        foreach (var item in items)
-            ChatMessages.Children.Add(CreateMessageElement(item));
-
+        foreach (var item in items) ChatMessages.Children.Add(CreateMessageElement(item));
         UpdateApprovalBar(session);
-
-        // Add processing indicator if actively processing
         if (session.Phase.Kind is Models.SessionPhaseKind.Processing or Models.SessionPhaseKind.Compacting)
             ChatMessages.Children.Add(CreateProcessingIndicator());
-
         Dispatcher.BeginInvoke(() => ChatScroller.ScrollToBottom(),
             System.Windows.Threading.DispatcherPriority.Loaded);
-
         _chatRefreshTimer?.Start();
     }
 
     private void RefreshChatMessages(Models.SessionState session)
     {
         var items = ConversationParser.Parse(session.SessionId, session.Cwd);
-
-        // Only rebuild if message count changed
         if (items.Count == _lastChatItemCount) return;
         _lastChatItemCount = items.Count;
-
         ChatMessages.Children.Clear();
-        foreach (var item in items)
-            ChatMessages.Children.Add(CreateMessageElement(item));
-
-        // Re-check session state from store for latest phase
+        foreach (var item in items) ChatMessages.Children.Add(CreateMessageElement(item));
         var latest = App.SessionStore.GetSession(session.SessionId);
         if (latest != null)
         {
@@ -314,7 +363,6 @@ public partial class NotchPanel : UserControl
             if (latest.Phase.Kind is Models.SessionPhaseKind.Processing or Models.SessionPhaseKind.Compacting)
                 ChatMessages.Children.Add(CreateProcessingIndicator());
         }
-
         Dispatcher.BeginInvoke(() => ChatScroller.ScrollToBottom(),
             System.Windows.Threading.DispatcherPriority.Loaded);
     }
@@ -322,190 +370,73 @@ public partial class NotchPanel : UserControl
     private void UpdateApprovalBar(Models.SessionState session)
     {
         if (session.Phase.IsWaitingForApproval && session.Phase.Permission is { } ctx)
-        {
-            ApprovalToolName.Text = ctx.ToolName;
-            ChatApprovalBar.Visibility = Visibility.Visible;
-        }
-        else
-        {
-            ChatApprovalBar.Visibility = Visibility.Collapsed;
-        }
+        { ApprovalToolName.Text = ctx.ToolName; ChatApprovalBar.Visibility = Visibility.Visible; }
+        else { ChatApprovalBar.Visibility = Visibility.Collapsed; }
     }
 
     private UIElement CreateProcessingIndicator()
     {
-        var spinner = new Controls.SpinnerText
-        {
-            Foreground = OrangeDot,
-            Margin = new Thickness(0, 0, 6, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        var text = new TextBlock
-        {
-            Text = "Processing...",
-            FontSize = 12,
-            FontFamily = new FontFamily("Consolas"),
-            Foreground = OrangeDot,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        var panel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Margin = new Thickness(0, 4, 0, 4)
-        };
-        panel.Children.Add(spinner);
-        panel.Children.Add(text);
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 4) };
+        panel.Children.Add(new Controls.SpinnerText { Foreground = OrangeDot, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center });
+        panel.Children.Add(new TextBlock { Text = "Processing...", FontSize = 12, FontFamily = new FontFamily("Consolas"), Foreground = OrangeDot, VerticalAlignment = VerticalAlignment.Center });
         return panel;
     }
 
-    private UIElement CreateMessageElement(ConversationParser.ChatItem item)
+    private UIElement CreateMessageElement(ConversationParser.ChatItem item) => item.Type switch
     {
-        return item.Type switch
-        {
-            ConversationParser.ItemType.User => CreateUserMessage(item.Content),
-            ConversationParser.ItemType.Assistant => CreateAssistantMessage(item.Content),
-            ConversationParser.ItemType.ToolCall => CreateToolCallRow(item),
-            ConversationParser.ItemType.Thinking => CreateThinkingRow(item.Content),
-            _ => new Grid()
-        };
-    }
+        ConversationParser.ItemType.User => CreateUserMessage(item.Content),
+        ConversationParser.ItemType.Assistant => CreateAssistantMessage(item.Content),
+        ConversationParser.ItemType.ToolCall => CreateToolCallRow(item),
+        ConversationParser.ItemType.Thinking => CreateThinkingRow(item.Content),
+        _ => new Grid()
+    };
 
-    private UIElement CreateUserMessage(string text)
+    private UIElement CreateUserMessage(string text) => new Border
     {
-        var textBlock = new TextBlock
-        {
-            Text = text,
-            FontSize = 12,
-            FontFamily = new FontFamily("Consolas"),
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = Brushes.White
-        };
-
-        return new Border
-        {
-            Child = textBlock,
-            Padding = new Thickness(12, 8, 12, 8),
-            Margin = new Thickness(60, 2, 0, 2),
-            CornerRadius = new CornerRadius(14),
-            Background = new SolidColorBrush(Color.FromArgb(38, 255, 255, 255)), // white 15%
-            HorizontalAlignment = HorizontalAlignment.Right
-        };
-    }
+        Child = new TextBlock { Text = text, FontSize = 12, FontFamily = new FontFamily("Consolas"), TextWrapping = TextWrapping.Wrap, Foreground = Brushes.White },
+        Padding = new Thickness(12, 8, 12, 8), Margin = new Thickness(60, 2, 0, 2),
+        CornerRadius = new CornerRadius(14), Background = new SolidColorBrush(Color.FromArgb(38, 255, 255, 255)),
+        HorizontalAlignment = HorizontalAlignment.Right
+    };
 
     private UIElement CreateAssistantMessage(string text)
     {
-        var dot = new Ellipse
-        {
-            Width = 5, Height = 5,
-            Fill = WhiteDot,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 6, 6, 0)
-        };
-
-        var textBlock = new TextBlock
-        {
-            Text = text,
-            FontSize = 12,
-            FontFamily = new FontFamily("Consolas"),
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = new SolidColorBrush(Color.FromArgb(230, 255, 255, 255)) // white 90%
-        };
-
         var panel = new StackPanel { Orientation = Orientation.Horizontal };
-        panel.Children.Add(dot);
-        panel.Children.Add(textBlock);
-
-        return new Border
-        {
-            Child = panel,
-            Margin = new Thickness(0, 2, 60, 2),
-            HorizontalAlignment = HorizontalAlignment.Left
-        };
+        panel.Children.Add(new Ellipse { Width = 5, Height = 5, Fill = WhiteDot, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 6, 6, 0) });
+        panel.Children.Add(new TextBlock { Text = text, FontSize = 12, FontFamily = new FontFamily("Consolas"), TextWrapping = TextWrapping.Wrap, Foreground = new SolidColorBrush(Color.FromArgb(230, 255, 255, 255)) });
+        return new Border { Child = panel, Margin = new Thickness(0, 2, 60, 2), HorizontalAlignment = HorizontalAlignment.Left };
     }
 
     private UIElement CreateToolCallRow(ConversationParser.ChatItem item)
     {
-        var dotColor = item.IsCompleted ? GreenDot : OrangeDot;
-
-        var dot = new Ellipse
-        {
-            Width = 6, Height = 6,
-            Fill = dotColor,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 6, 0)
-        };
-
-        var toolName = new TextBlock
-        {
-            Text = item.ToolName ?? "tool",
-            FontSize = 11,
-            FontWeight = FontWeights.SemiBold,
-            FontFamily = new FontFamily("Consolas"),
-            Foreground = item.IsCompleted
-                ? new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)) // white 70%
-                : new SolidColorBrush(Color.FromArgb(153, 255, 255, 255)), // white 60%
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        var inputText = new TextBlock
-        {
-            Text = item.ToolInput ?? "",
-            FontSize = 11,
-            FontFamily = new FontFamily("Consolas"),
-            Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)), // white 40%
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(6, 0, 0, 0),
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-
-        var row = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Margin = new Thickness(0, 1, 0, 1)
-        };
-        row.Children.Add(dot);
-        row.Children.Add(toolName);
-        row.Children.Add(inputText);
-
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 1, 0, 1) };
+        row.Children.Add(new Ellipse { Width = 6, Height = 6, Fill = item.IsCompleted ? GreenDot : OrangeDot, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) });
+        row.Children.Add(new TextBlock { Text = item.ToolName ?? "tool", FontSize = 11, FontWeight = FontWeights.SemiBold, FontFamily = new FontFamily("Consolas"), Foreground = item.IsCompleted ? new SolidColorBrush(Color.FromArgb(180, 255, 255, 255)) : new SolidColorBrush(Color.FromArgb(153, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Center });
+        row.Children.Add(new TextBlock { Text = item.ToolInput ?? "", FontSize = 11, FontFamily = new FontFamily("Consolas"), Foreground = new SolidColorBrush(Color.FromArgb(100, 255, 255, 255)), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
         return row;
     }
 
-    private UIElement CreateThinkingRow(string text)
+    private UIElement CreateThinkingRow(string text) => new TextBlock
     {
-        var preview = text.Length > 60 ? text[..60] + "..." : text;
+        Text = $"thinking: {(text.Length > 60 ? text[..60] + "..." : text)}", FontSize = 10, FontFamily = new FontFamily("Consolas"),
+        FontStyle = FontStyles.Italic, Foreground = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255)),
+        Margin = new Thickness(12, 1, 0, 1), TextTrimming = TextTrimming.CharacterEllipsis
+    };
 
-        var label = new TextBlock
-        {
-            Text = $"thinking: {preview}",
-            FontSize = 10,
-            FontFamily = new FontFamily("Consolas"),
-            FontStyle = FontStyles.Italic,
-            Foreground = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255)), // white 30%
-            Margin = new Thickness(12, 1, 0, 1),
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-
-        return label;
+    private void OnSessionRowClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.Tag is Models.SessionState session)
+        { ViewModel.ShowChatCommand.Execute(session); LoadChatMessages(session); }
+        e.Handled = true;
     }
-
 
     private void OnChatApprove(object sender, RoutedEventArgs e)
     {
-        if (ViewModel.CurrentChatSession is { } session)
-        {
-            ViewModel.ApprovePermissionCommand.Execute(session);
-            ChatApprovalBar.Visibility = Visibility.Collapsed;
-        }
+        if (ViewModel.CurrentChatSession is { } s) { ViewModel.ApprovePermissionCommand.Execute(s); ChatApprovalBar.Visibility = Visibility.Collapsed; }
     }
 
     private void OnChatDeny(object sender, RoutedEventArgs e)
     {
-        if (ViewModel.CurrentChatSession is { } session)
-        {
-            ViewModel.DenyPermissionCommand.Execute(session);
-            ChatApprovalBar.Visibility = Visibility.Collapsed;
-        }
+        if (ViewModel.CurrentChatSession is { } s) { ViewModel.DenyPermissionCommand.Execute(s); ChatApprovalBar.Visibility = Visibility.Collapsed; }
     }
 }

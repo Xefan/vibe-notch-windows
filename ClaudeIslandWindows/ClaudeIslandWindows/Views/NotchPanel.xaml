@@ -4,23 +4,35 @@
              xmlns:vm="clr-namespace:ClaudeIslandWindows.ViewModels"
              xmlns:controls="clr-namespace:ClaudeIslandWindows.Controls"
              x:Name="Root"
-             Width="196" Height="32">
+             Width="600" Height="580">
 
-    <Grid x:Name="NotchContainer">
-        <!-- Notch body, clipped to notch shape in code-behind -->
-        <Border x:Name="NotchBorder"
-                Background="#000000"
-                CornerRadius="0,0,16,16"
-                SizeChanged="OnNotchSizeChanged" />
+    <!-- Content grid at full expanded size. A Clip geometry masks it to the notch shape. -->
+    <!-- Shadow wrapper: effect here renders shadow of the clipped content shape -->
+    <Grid x:Name="ShadowWrapper"
+          HorizontalAlignment="Center"
+          VerticalAlignment="Top">
+        <Grid.Effect>
+            <DropShadowEffect x:Name="NotchShadow"
+                              ShadowDepth="0" BlurRadius="15"
+                              Opacity="0" Color="#000000" />
+        </Grid.Effect>
 
-        <!-- Content -->
+        <Grid x:Name="ContentGrid"
+              Width="480" Height="320"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Top"
+              Background="#000000">
+        <Grid.Clip>
+            <StreamGeometry x:Name="NotchClip" />
+        </Grid.Clip>
+
         <Grid Margin="14,4,14,4" ClipToBounds="True">
             <Grid.RowDefinitions>
                 <RowDefinition Height="24" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- Header row (clickable to toggle) -->
+            <!-- Header row -->
             <Grid Grid.Row="0" x:Name="HeaderRow"
                   Background="Transparent"
                   MouseLeftButtonDown="OnHeaderClick"
@@ -32,16 +44,16 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <!-- Claude crab icon (visible when processing/approval) -->
                 <controls:CrabIcon x:Name="CrabIcon" Grid.Column="0"
                                    Width="18" Height="14"
-                                   VerticalAlignment="Center" Margin="4,0,4,0"
-                                   Visibility="Collapsed" />
+                                   VerticalAlignment="Center" Margin="4,0,4,0">
+                    <controls:CrabIcon.RenderTransform>
+                        <TranslateTransform x:Name="CrabTranslate" X="0" />
+                    </controls:CrabIcon.RenderTransform>
+                </controls:CrabIcon>
 
-                <!-- Spacer -->
                 <Grid Grid.Column="1" />
 
-                <!-- Processing spinner (fixed width to prevent layout shift) -->
                 <TextBlock x:Name="SpinnerText" Grid.Column="2"
                            FontFamily="Segoe UI Symbol"
                            FontSize="12" FontWeight="Bold"
@@ -49,18 +61,12 @@
                            VerticalAlignment="Center"
                            TextAlignment="Center"
                            Width="14" Margin="0,0,8,0"
-                           Visibility="Collapsed" />
+                           Visibility="Collapsed">
+                    <TextBlock.RenderTransform>
+                        <TranslateTransform x:Name="SpinnerTranslate" X="0" />
+                    </TextBlock.RenderTransform>
+                </TextBlock>
 
-                <!-- Waiting-for-input checkmark (green, visible when done) -->
-                <TextBlock x:Name="CheckmarkIcon" Grid.Column="2"
-                           Text="✓" FontSize="12" FontWeight="Bold"
-                           Foreground="#64C864"
-                           VerticalAlignment="Center"
-                           TextAlignment="Center"
-                           Width="14" Margin="0,0,8,0"
-                           Visibility="Collapsed" />
-
-                <!-- Menu button (visible when opened) -->
                 <Button x:Name="MenuButton" Grid.Column="3"
                         Command="{Binding ToggleMenuCommand}"
                         Background="Transparent" BorderBrush="Transparent"
@@ -80,9 +86,8 @@
                 </Button>
             </Grid>
 
-            <!-- Content area (visible when opened) -->
+            <!-- Content area -->
             <Grid Grid.Row="1" x:Name="ContentArea" Opacity="0" Visibility="Collapsed">
-                <!-- Instances list -->
                 <ScrollViewer VerticalScrollBarVisibility="Auto"
                               Visibility="{Binding CurrentContent, Converter={StaticResource ContentVisibility}, ConverterParameter=Instances}">
                     <ItemsControl ItemsSource="{Binding Sessions}" Margin="0,8,0,0">
@@ -101,7 +106,6 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
 
-                                        <!-- State indicator: animated spinner for active phases -->
                                         <controls:SpinnerText Grid.Column="0"
                                                    VerticalAlignment="Center" Margin="0,0,8,0"
                                                    Foreground="{Binding Phase, Converter={StaticResource PhaseColorConverter}}"
@@ -140,13 +144,11 @@
                     </ItemsControl>
                 </ScrollViewer>
 
-                <!-- Empty state -->
                 <TextBlock Text="No active Claude sessions"
                            Foreground="#404040" FontSize="13"
                            HorizontalAlignment="Center" VerticalAlignment="Center"
                            Visibility="{Binding Sessions.Count, Converter={StaticResource EmptyVisibility}}" />
 
-                <!-- Menu -->
                 <StackPanel Margin="0,8,0,0"
                             Visibility="{Binding CurrentContent, Converter={StaticResource ContentVisibility}, ConverterParameter=Menu}">
                     <TextBlock Text="Settings" FontSize="16" FontWeight="SemiBold"
@@ -186,17 +188,14 @@
                     </Button>
                 </StackPanel>
 
-                <!-- Chat view -->
                 <Grid Margin="0,4,0,0"
                       Visibility="{Binding CurrentContent, Converter={StaticResource ContentVisibility}, ConverterParameter=Chat}">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <!-- Chat header with back button -->
                     <Grid Grid.Row="0" Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
@@ -224,13 +223,11 @@
                                    HorizontalAlignment="Center" />
                     </Grid>
 
-                    <!-- Messages -->
                     <ScrollViewer x:Name="ChatScroller" Grid.Row="1"
                                   VerticalScrollBarVisibility="Auto">
                         <StackPanel x:Name="ChatMessages" />
                     </ScrollViewer>
 
-                    <!-- Approval bar (when waiting) -->
                     <Border x:Name="ChatApprovalBar" Grid.Row="2"
                             Background="#1A1A1A" CornerRadius="8"
                             Padding="8,6" Margin="0,4,0,0"
@@ -256,9 +253,9 @@
                                     Click="OnChatDeny" />
                         </Grid>
                     </Border>
-
                 </Grid>
             </Grid>
         </Grid>
+    </Grid>
     </Grid>
 </UserControl>
