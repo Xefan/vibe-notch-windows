@@ -9,9 +9,9 @@
         Topmost="True"
         ShowInTaskbar="False"
         ResizeMode="NoResize"
-        SizeToContent="WidthAndHeight"
-        MouseEnter="OnMouseEnter"
-        MouseLeave="OnMouseLeave">
+        Width="620" Height="600">
 
-    <views:NotchPanel x:Name="Panel" />
+    <views:NotchPanel x:Name="Panel"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Top" />
 </Window>
