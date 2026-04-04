@@ -13,60 +13,36 @@ public sealed class ConversationParser
         DateTime Timestamp,
         string? ToolName = null,
         string? ToolInput = null,
-        bool IsCompleted = false);
+        bool IsCompleted = false,
+        string? ToolResult = null,
+        string? OldString = null,
+        string? NewString = null,
+        string? FilePath = null);
 
-    /// <summary>
-    /// Parse a Claude JSONL conversation file and return displayable chat items.
-    /// </summary>
+    // Cache: key = sessionFile path, value = (lastModified, items)
+    private static readonly Dictionary<string, (DateTime Modified, List<ChatItem> Items)> _cache = new();
+
     public static List<ChatItem> Parse(string sessionId, string cwd)
     {
-        var items = new List<ChatItem>();
-        var completedToolIds = new HashSet<string>();
-        var toolUseIds = new List<string>(); // Track order for completion matching
-
         var projectDir = cwd
-            .Replace(":\\", "--")
-            .Replace(":/", "--")
-            .Replace("\\", "-")
-            .Replace("/", "-")
-            .Replace(".", "-")
-            .Replace(":", "-");
+            .Replace(":\\", "--").Replace(":/", "--")
+            .Replace("\\", "-").Replace("/", "-")
+            .Replace(".", "-").Replace(":", "-");
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var sessionFile = Path.Combine(home, ".claude", "projects", projectDir, sessionId + ".jsonl");
 
-        if (!File.Exists(sessionFile)) return items;
+        if (!File.Exists(sessionFile)) return [];
 
-        // First pass: collect completed tool IDs
-        // Tool results appear in USER messages as tool_result blocks
-        try
-        {
-            foreach (var line in File.ReadLines(sessionFile))
-            {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                try
-                {
-                    using var doc = JsonDocument.Parse(line);
-                    var root = doc.RootElement;
-                    if (!root.TryGetProperty("message", out var msg)) continue;
-                    if (!msg.TryGetProperty("content", out var content)) continue;
-                    if (content.ValueKind != JsonValueKind.Array) continue;
+        // Check cache
+        var lastWrite = File.GetLastWriteTimeUtc(sessionFile);
+        if (_cache.TryGetValue(sessionFile, out var cached) && cached.Modified == lastWrite)
+            return cached.Items;
 
-                    foreach (var block in content.EnumerateArray())
-                    {
-                        if (block.TryGetProperty("type", out var bt) &&
-                            bt.GetString() == "tool_result" &&
-                            block.TryGetProperty("tool_use_id", out var tid))
-                        {
-                            completedToolIds.Add(tid.GetString() ?? "");
-                        }
-                    }
-                }
-                catch { }
-            }
-        }
-        catch { }
+        // Single pass: collect everything
+        var rawItems = new List<ChatItem>();
+        var completedToolIds = new HashSet<string>();
+        var toolResults = new Dictionary<string, string>();
 
-        // Second pass: build display items
         try
         {
             foreach (var line in File.ReadLines(sessionFile))
@@ -83,20 +59,21 @@ public sealed class ConversationParser
                     var type = root.TryGetProperty("type", out var tp) ? tp.GetString() : null;
                     if (type is not ("user" or "assistant")) continue;
 
+                    if (!root.TryGetProperty("message", out var message)) continue;
+                    if (!message.TryGetProperty("content", out var content)) continue;
+
                     var uuid = root.TryGetProperty("uuid", out var u) ? u.GetString() ?? "" : "";
                     var timestamp = DateTime.UtcNow;
                     if (root.TryGetProperty("timestamp", out var ts) &&
                         DateTime.TryParse(ts.GetString(), out var parsed))
                         timestamp = parsed;
 
-                    if (!root.TryGetProperty("message", out var message)) continue;
-                    if (!message.TryGetProperty("content", out var content)) continue;
-
                     if (content.ValueKind == JsonValueKind.String)
                     {
                         var text = content.GetString() ?? "";
                         if (!string.IsNullOrWhiteSpace(text))
-                            items.Add(new ChatItem(uuid, type == "user" ? ItemType.User : ItemType.Assistant,
+                            rawItems.Add(new ChatItem(uuid,
+                                type == "user" ? ItemType.User : ItemType.Assistant,
                                 text, timestamp));
                     }
                     else if (content.ValueKind == JsonValueKind.Array)
@@ -106,11 +83,27 @@ public sealed class ConversationParser
                             if (!block.TryGetProperty("type", out var blockType)) continue;
                             var bt = blockType.GetString();
 
+                            if (bt == "tool_result" && block.TryGetProperty("tool_use_id", out var tid))
+                            {
+                                var toolId = tid.GetString() ?? "";
+                                completedToolIds.Add(toolId);
+                                if (block.TryGetProperty("content", out var rc))
+                                {
+                                    if (rc.ValueKind == JsonValueKind.String)
+                                        toolResults[toolId] = rc.GetString() ?? "";
+                                    else if (rc.ValueKind == JsonValueKind.Array)
+                                        foreach (var rcItem in rc.EnumerateArray())
+                                            if (rcItem.TryGetProperty("text", out var rt))
+                                            { toolResults[toolId] = rt.GetString() ?? ""; break; }
+                                }
+                                continue;
+                            }
+
                             if (bt == "text" && block.TryGetProperty("text", out var textEl))
                             {
                                 var text = textEl.GetString() ?? "";
                                 if (!string.IsNullOrWhiteSpace(text))
-                                    items.Add(new ChatItem($"{uuid}-text",
+                                    rawItems.Add(new ChatItem($"{uuid}-text",
                                         type == "user" ? ItemType.User : ItemType.Assistant,
                                         text, timestamp));
                             }
@@ -119,22 +112,27 @@ public sealed class ConversationParser
                                 var toolName = nameEl.GetString() ?? "tool";
                                 var toolId = block.TryGetProperty("id", out var idEl)
                                     ? idEl.GetString() ?? "" : "";
-                                var inputStr = "";
-                                if (block.TryGetProperty("input", out var input))
-                                    inputStr = SummarizeToolInput(toolName, input);
+                                var inputStr = block.TryGetProperty("input", out var input)
+                                    ? SummarizeToolInput(toolName, input) : "";
 
-                                var isCompleted = completedToolIds.Contains(toolId);
-                                items.Add(new ChatItem(toolId, ItemType.ToolCall,
+                                string? oldStr = null, newStr = null, filePath = null;
+                                if (toolName == "Edit" && block.TryGetProperty("input", out var editInput))
+                                {
+                                    if (editInput.TryGetProperty("old_string", out var os)) oldStr = os.GetString();
+                                    if (editInput.TryGetProperty("new_string", out var ns)) newStr = ns.GetString();
+                                    if (editInput.TryGetProperty("file_path", out var fp2)) filePath = fp2.GetString();
+                                }
+
+                                rawItems.Add(new ChatItem(toolId, ItemType.ToolCall,
                                     inputStr, timestamp,
-                                    ToolName: toolName,
-                                    ToolInput: inputStr,
-                                    IsCompleted: isCompleted));
+                                    ToolName: toolName, ToolInput: inputStr,
+                                    OldString: oldStr, NewString: newStr, FilePath: filePath));
                             }
                             else if (bt == "thinking" && block.TryGetProperty("thinking", out var thinkEl))
                             {
                                 var text = thinkEl.GetString() ?? "";
                                 if (!string.IsNullOrWhiteSpace(text))
-                                    items.Add(new ChatItem($"{uuid}-think", ItemType.Thinking,
+                                    rawItems.Add(new ChatItem($"{uuid}-think", ItemType.Thinking,
                                         text, timestamp));
                             }
                         }
@@ -145,6 +143,18 @@ public sealed class ConversationParser
         }
         catch { }
 
+        // Apply completion status to tool items
+        var items = rawItems.Select(item =>
+            item.Type == ItemType.ToolCall && completedToolIds.Contains(item.Id)
+                ? item with
+                {
+                    IsCompleted = true,
+                    ToolResult = toolResults.GetValueOrDefault(item.Id)
+                }
+                : item
+        ).ToList();
+
+        _cache[sessionFile] = (lastWrite, items);
         return items;
     }
 
