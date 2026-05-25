@@ -4,11 +4,11 @@
     A Windows port of the <a href="https://github.com/MarcinusX/claude-island">original macOS app</a> that brings Dynamic Island-style notifications to Claude Code CLI sessions.
     <br />
     <br />
-    <a href="https://github.com/Xefan/claude-island-windows/releases/latest" target="_blank" rel="noopener noreferrer">
-      <img src="https://img.shields.io/github/v/release/Xefan/claude-island-windows?style=rounded&color=white&labelColor=000000&label=release" alt="Release Version" />
+    <a href="https://github.com/Xefan/vibe-notch-windows/releases/latest" target="_blank" rel="noopener noreferrer">
+      <img src="https://img.shields.io/github/v/release/Xefan/vibe-notch-windows?style=rounded&color=white&labelColor=000000&label=release" alt="Release Version" />
     </a>
     <a href="#" target="_blank" rel="noopener noreferrer">
-      <img alt="GitHub Downloads" src="https://img.shields.io/github/downloads/Xefan/claude-island-windows/total?style=rounded&color=white&labelColor=000000">
+      <img alt="GitHub Downloads" src="https://img.shields.io/github/downloads/Xefan/vibe-notch-windows/total?style=rounded&color=white&labelColor=000000">
     </a>
   </p>
 </div>
@@ -29,10 +29,10 @@
 
 ## Install
 
-Download the latest release from the [releases page](https://github.com/Xefan/claude-island-windows/releases/latest), or build from source:
+Download the latest release from the [releases page](https://github.com/Xefan/vibe-notch-windows/releases/latest), or build from source:
 
 ```bash
-cd claude-island-windows/ClaudeIslandWindows
+cd vibe-notch-windows/ClaudeIslandWindows
 dotnet build
 dotnet run
 ```

@@ -531,7 +531,7 @@ public partial class NotchPanel : UserControl
     {
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
         {
-            FileName = "https://github.com/Xefan/claude-island-windows",
+            FileName = "https://github.com/Xefan/vibe-notch-windows",
             UseShellExecute = true
         });
         e.Handled = true;
