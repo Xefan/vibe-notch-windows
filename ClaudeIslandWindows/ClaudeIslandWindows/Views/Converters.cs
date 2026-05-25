@@ -99,6 +99,16 @@ public class EmptyVisibilityConverter : IValueConverter
         => throw new NotSupportedException();
 }
 
+/// Collapses a TextBlock when the bound string is null/empty.
+public class NullOrEmptyToCollapsedConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        => string.IsNullOrWhiteSpace(value as string) ? Visibility.Collapsed : Visibility.Visible;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
 /// <summary>Shows spinner text for processing/approval phases.</summary>
 public class PhaseSpinnerConverter : IValueConverter
 {

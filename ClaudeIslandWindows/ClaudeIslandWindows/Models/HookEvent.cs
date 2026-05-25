@@ -38,6 +38,18 @@ public sealed class HookEvent
     [JsonPropertyName("message")]
     public string? Message { get; set; }
 
+    /// Set by the PS1 hook on PostToolUseFailure — tool errored or was interrupted.
+    [JsonPropertyName("tool_error")]
+    public string? ToolError { get; set; }
+
+    /// Set on PermissionDenied — auto-mode classifier rejection reason.
+    [JsonPropertyName("denial_reason")]
+    public string? DenialReason { get; set; }
+
+    /// Set on StopFailure — API error message (rate limit / auth / billing).
+    [JsonPropertyName("stop_error")]
+    public string? StopError { get; set; }
+
     public SessionPhase DeterminePhase()
     {
         if (Event == "PreCompact")

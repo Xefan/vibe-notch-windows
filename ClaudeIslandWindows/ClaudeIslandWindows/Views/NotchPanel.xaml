@@ -126,6 +126,12 @@
                                                        Foreground="#E0E0E0" />
                                             <TextBlock Text="{Binding Phase, Converter={StaticResource PhaseTextConverter}}"
                                                        FontSize="11" Foreground="#707070" />
+                                            <!-- Surfaced by hook events PostToolUseFailure / PermissionDenied / StopFailure.
+                                                 Cleared on UserPromptSubmit/SessionStart so it can't linger past recovery. -->
+                                            <TextBlock Text="{Binding LastError}"
+                                                       FontSize="11" Foreground="#EE9090"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Visibility="{Binding LastError, Converter={StaticResource NullOrEmptyVis}}" />
                                         </StackPanel>
 
                                         <StackPanel Grid.Column="2" Orientation="Horizontal"

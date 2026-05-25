@@ -1,4 +1,6 @@
 using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using ClaudeIslandWindows.Models;
@@ -95,13 +97,24 @@ public sealed class NamedPipeServer
 
     private async Task AcceptLoopAsync(CancellationToken ct)
     {
+        // Lock the pipe DACL to just the current user. The default Windows DACL on
+        // an unspecified-security NamedPipeServerStream is permissive enough that
+        // another local process can write a fake hook event — including a forged
+        // approval response that allows a tool call we never authorized. Granting
+        // FullControl only to the running user's SID closes that vector.
+        var ps = new PipeSecurity();
+        var currentUser = WindowsIdentity.GetCurrent().User!;
+        ps.AddAccessRule(new PipeAccessRule(
+            currentUser, PipeAccessRights.FullControl, AccessControlType.Allow));
+
         while (!ct.IsCancellationRequested)
         {
             // Use Message mode so reads return complete messages
-            var pipe = new NamedPipeServerStream(
+            var pipe = NamedPipeServerStreamAcl.Create(
                 PipeName, PipeDirection.InOut,
                 NamedPipeServerStream.MaxAllowedServerInstances,
-                PipeTransmissionMode.Message, PipeOptions.Asynchronous);
+                PipeTransmissionMode.Message, PipeOptions.Asynchronous,
+                inBufferSize: 0, outBufferSize: 0, pipeSecurity: ps);
             try
             {
                 await pipe.WaitForConnectionAsync(ct);

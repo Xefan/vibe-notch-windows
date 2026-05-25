@@ -99,7 +99,22 @@ public sealed class SessionStore
         // Track whether this session has ever received a UserPromptSubmit
         // (main sessions have; subagents don't — they're spawned via tool calls)
         if (hookEvent.Event == "UserPromptSubmit")
+        {
             session.HasUserPrompt = true;
+            session.LastError = null; // user submitted a new turn — wipe any stale error
+        }
+        if (hookEvent.Event == "SessionStart")
+            session.LastError = null;
+
+        // Capture failure context from the new (v2.0+) hook events. PS1 sets these on
+        // PostToolUseFailure / PermissionDenied / StopFailure; we surface them in the row
+        // so a StopFailure doesn't look identical to a clean Stop.
+        if (!string.IsNullOrWhiteSpace(hookEvent.ToolError))
+            session.LastError = $"{hookEvent.Tool ?? "tool"} failed: {Trunc(hookEvent.ToolError, 120)}";
+        else if (!string.IsNullOrWhiteSpace(hookEvent.DenialReason))
+            session.LastError = $"denied: {Trunc(hookEvent.DenialReason, 120)}";
+        else if (!string.IsNullOrWhiteSpace(hookEvent.StopError))
+            session.LastError = $"stop failed: {Trunc(hookEvent.StopError, 120)}";
 
         var oldPhase = session.Phase.Kind;
         session.Phase = newPhase;
@@ -125,6 +140,10 @@ public sealed class SessionStore
         // Track last tool for display
         if (hookEvent.Tool != null)
             session.LastToolName = hookEvent.Tool;
+
+        // local helper kept inline so it can't grow into a general utility class
+        static string Trunc(string s, int max) =>
+            s.Length <= max ? s : s[..(max - 1)] + "…";
 
         if (newPhase.Kind == SessionPhaseKind.Ended)
         {

@@ -10,6 +10,7 @@
         <views:ContentVisibilityConverter x:Key="ContentVisibility" />
         <views:GreaterThanZeroConverter x:Key="GreaterThanZero" />
         <views:EmptyVisibilityConverter x:Key="EmptyVisibility" />
+        <views:NullOrEmptyToCollapsedConverter x:Key="NullOrEmptyVis" />
         <views:PhaseSpinnerConverter x:Key="PhaseSpinnerConverter" />
         <views:SpinnerVisibilityConverter x:Key="SpinnerVisConverter" />
         <views:DotVisibilityConverter x:Key="DotVisConverter" />

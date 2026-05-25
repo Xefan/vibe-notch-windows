@@ -9,6 +9,10 @@ public sealed class SessionState
     public SessionPhase Phase { get; set; } = SessionPhase.Idle;
     public string? LastMessage { get; set; }
     public string? LastToolName { get; set; }
+    /// One-line summary of the most recent failure surfaced by the hook
+    /// (tool error / auto-classifier denial / Stop API error). Cleared on
+    /// UserPromptSubmit or SessionStart so it doesn't linger past recovery.
+    public string? LastError { get; set; }
     public DateTime LastActivity { get; set; } = DateTime.UtcNow;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     /// True once this session has received a UserPromptSubmit event.
