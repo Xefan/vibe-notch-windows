@@ -154,8 +154,33 @@ switch ($event) {
     "Stop" {
         $state["status"] = "waiting_for_input"
     }
-    "SubagentStop" {
+    "StopFailure" {
+        # Turn ended via API error (rate limit, auth, billing)
         $state["status"] = "waiting_for_input"
+        $state["stop_error"] = if ($data.error) { $data.error } else { $data.message }
+    }
+    "SubagentStart" {
+        # Subagent task beginning — main session still processing
+        $state["status"] = "processing"
+    }
+    "SubagentStop" {
+        # Subagent completed — main session continues processing
+        $state["status"] = "processing"
+    }
+    "PostToolUseFailure" {
+        # Tool errored or was interrupted — main session continues processing
+        $state["status"] = "processing"
+        $state["tool"] = $data.tool_name
+        $state["tool_input"] = $toolInput
+        $state["tool_error"] = if ($data.error) { $data.error } else { $data.message }
+        if ($data.tool_use_id) { $state["tool_use_id"] = $data.tool_use_id }
+    }
+    "PermissionDenied" {
+        # Auto-mode classifier denied a tool call
+        $state["status"] = "processing"
+        $state["tool"] = $data.tool_name
+        $state["tool_input"] = $toolInput
+        $state["denial_reason"] = if ($data.reason) { $data.reason } else { $data.message }
     }
     "SessionStart" {
         $state["status"] = "waiting_for_input"
@@ -165,6 +190,10 @@ switch ($event) {
     }
     "PreCompact" {
         $state["status"] = "compacting"
+    }
+    "PostCompact" {
+        # Compaction finished — return to processing
+        $state["status"] = "processing"
     }
     default {
         $state["status"] = "unknown"

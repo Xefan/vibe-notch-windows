@@ -34,6 +34,8 @@ public partial class NotchPanel : UserControl
     {
         InitializeComponent();
         ViewModel.PropertyChanged += OnViewModelChanged;
+        App.BuddyBridge.PropertyChanged += OnBuddyBridgeChanged;
+        ApplyBuddyStatusColor();
 
         _spinnerTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         _spinnerTimer.Tick += (_, _) =>
@@ -51,7 +53,7 @@ public partial class NotchPanel : UserControl
                 RefreshChatMessages(session);
         };
 
-        // Use HitTarget for hover (matches visible notch size, not full ContentGrid)
+        // Use HitTarget for hover and click (matches visible notch size, not full ContentGrid)
         HitTarget.MouseEnter += (_, _) =>
         {
             if (_suppressIndicators) return;
@@ -60,6 +62,11 @@ public partial class NotchPanel : UserControl
         HitTarget.MouseLeave += (_, _) =>
         {
             ViewModel.OnMouseLeave();
+        };
+        HitTarget.MouseLeftButtonDown += (_, e) =>
+        {
+            ViewModel.ToggleCommand.Execute(null);
+            e.Handled = true;
         };
 
         // Set initial clip with notch shape
@@ -180,6 +187,8 @@ public partial class NotchPanel : UserControl
                 Dispatcher.BeginInvoke(() => LoadChatMessages(session));
             else
                 _chatRefreshTimer?.Stop();
+            if (ViewModel.CurrentContent == ViewModels.ContentType.Menu)
+                Dispatcher.BeginInvoke(RefreshMenuStates);
         }
         else if (e.PropertyName is nameof(ViewModels.NotchViewModel.HasActiveSessions)
                  or nameof(ViewModels.NotchViewModel.IsProcessing)
@@ -246,8 +255,18 @@ public partial class NotchPanel : UserControl
         MenuButton.BeginAnimation(OpacityProperty,
             new DoubleAnimation(0, new Duration(TimeSpan.FromMilliseconds(120))));
 
-        // Slide crab/spinner into activity positions if there's activity
         var hasActivity = ViewModel.IsProcessing || ViewModel.PendingApprovalCount > 0;
+
+        // Always animate translates to their closed positions. If we only did this when hasActivity was true,
+        // a race where IsProcessing flipped between the user clicking close and AnimateClose actually running
+        // (Dispatcher.BeginInvoke is async) would leave the indicators stuck at X=0 (open position) for the
+        // entire close animation, then UpdateStatusIndicators would snap them at the end — looking like the
+        // spinner "moves to the middle then warps back".
+        CrabTranslate.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(ActivityOffset + 3, CloseDuration) { EasingFunction = CloseEase });
+        SpinnerTranslate.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(-ActivityOffset, CloseDuration) { EasingFunction = CloseEase });
+
         if (hasActivity)
         {
             // Show "?" for approvals during close
@@ -260,11 +279,6 @@ public partial class NotchPanel : UserControl
             SpinnerText.Visibility = Visibility.Visible;
             SetValue(CrabScale, ScaleTransform.ScaleXProperty, 1);
             SetValue(CrabScale, ScaleTransform.ScaleYProperty, 1);
-
-            CrabTranslate.BeginAnimation(TranslateTransform.XProperty,
-                new DoubleAnimation(ActivityOffset + 3, CloseDuration) { EasingFunction = CloseEase });
-            SpinnerTranslate.BeginAnimation(TranslateTransform.XProperty,
-                new DoubleAnimation(-ActivityOffset, CloseDuration) { EasingFunction = CloseEase });
         }
 
         AnimateClip(ViewModels.NotchViewModel.ClosedWidth, ViewModels.NotchViewModel.ClosedHeight,
@@ -330,18 +344,214 @@ public partial class NotchPanel : UserControl
         Application.Current.Shutdown();
     }
 
+    private void OnQuitClick(object sender, MouseButtonEventArgs e)
+    {
+        App.PipeServer.Stop();
+        Application.Current.Shutdown();
+    }
+
+    // --- Sound picker ---
+    private static readonly string[] SoundNames = Services.SoundPlayer.AvailableSounds.ToArray();
+
+    private void OnSoundRowClick(object sender, MouseButtonEventArgs e)
+    {
+        SoundPickerPanel.Visibility = SoundPickerPanel.Visibility == Visibility.Visible
+            ? Visibility.Collapsed : Visibility.Visible;
+        SoundChevron.Text = SoundPickerPanel.Visibility == Visibility.Visible ? "\u2304" : "\u203A";
+        if (SoundPickerPanel.Visibility == Visibility.Visible && SoundList.Children.Count == 0)
+            BuildSoundList();
+        e.Handled = true;
+    }
+
+    private void BuildSoundList()
+    {
+        foreach (var name in SoundNames)
+        {
+            var soundName = name;
+            var row = new Border
+            {
+                Padding = new Thickness(28, 8, 12, 8),
+                Cursor = Cursors.Hand,
+                Style = (Style)FindResource("MenuRowBorder"),
+                CornerRadius = new CornerRadius(6)
+            };
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var label = new TextBlock
+            {
+                Text = soundName,
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Color.FromArgb(179, 255, 255, 255)),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var check = new TextBlock
+            {
+                Text = soundName == Services.Settings.Current.NotificationSound ? "\u2713" : "",
+                FontSize = 10, FontWeight = FontWeights.Bold,
+                Foreground = new SolidColorBrush(Color.FromRgb(76, 175, 80)),
+                VerticalAlignment = VerticalAlignment.Center,
+                Tag = soundName
+            };
+            Grid.SetColumn(label, 0);
+            Grid.SetColumn(check, 1);
+            grid.Children.Add(label);
+            grid.Children.Add(check);
+            row.Child = grid;
+
+            row.MouseLeftButtonDown += (_, ev) =>
+            {
+                Services.Settings.Current.NotificationSound = soundName;
+                Services.Settings.Current.Save();
+                Services.SoundPlayer.Play(soundName); // preview
+                // Update checkmarks
+                foreach (var child in SoundList.Children.OfType<Border>())
+                    if (child.Child is Grid g)
+                        foreach (var tb in g.Children.OfType<TextBlock>())
+                            if (tb.Tag is string tag)
+                                tb.Text = tag == Services.Settings.Current.NotificationSound ? "\u2713" : "";
+                ev.Handled = true;
+            };
+
+            SoundList.Children.Add(row);
+        }
+    }
+
+    // --- Launch at Login ---
+    private bool _launchAtLogin;
+
+    private void OnLaunchAtLoginClick(object sender, MouseButtonEventArgs e)
+    {
+        _launchAtLogin = !_launchAtLogin;
+        LaunchDot.Fill = _launchAtLogin
+            ? new SolidColorBrush(Color.FromRgb(76, 175, 80))
+            : new SolidColorBrush(Color.FromArgb(102, 255, 255, 255));
+        LaunchLabel.Text = _launchAtLogin ? "On" : "Off";
+
+        if (_launchAtLogin)
+            Services.StartupManager.Enable();
+        else
+            Services.StartupManager.Disable();
+        e.Handled = true;
+    }
+
+    // --- Hooks toggle ---
+    private void OnHooksToggleClick(object sender, MouseButtonEventArgs e)
+    {
+        var isInstalled = Services.HookInstaller.IsInstalled();
+        if (isInstalled)
+        {
+            Services.HookInstaller.Uninstall();
+            HooksDot.Fill = new SolidColorBrush(Color.FromArgb(102, 255, 255, 255));
+            HooksLabel.Text = "Off";
+        }
+        else
+        {
+            Services.HookInstaller.InstallIfNeeded();
+            HooksDot.Fill = new SolidColorBrush(Color.FromRgb(76, 175, 80));
+            HooksLabel.Text = "On";
+        }
+        e.Handled = true;
+    }
+
+    private void RefreshMenuStates()
+    {
+        _launchAtLogin = Services.StartupManager.IsEnabled();
+        LaunchDot.Fill = _launchAtLogin
+            ? new SolidColorBrush(Color.FromRgb(76, 175, 80))
+            : new SolidColorBrush(Color.FromArgb(102, 255, 255, 255));
+        LaunchLabel.Text = _launchAtLogin ? "On" : "Off";
+
+        var hooksOn = Services.HookInstaller.IsInstalled();
+        HooksDot.Fill = hooksOn
+            ? new SolidColorBrush(Color.FromRgb(76, 175, 80))
+            : new SolidColorBrush(Color.FromArgb(102, 255, 255, 255));
+        HooksLabel.Text = hooksOn ? "On" : "Off";
+
+        RefreshBuddyMenuRow();
+    }
+
+    private void RefreshBuddyMenuRow()
+    {
+        var bridge = App.BuddyBridge;
+        var (color, label, description) = bridge.Status switch
+        {
+            BuddyBridge.BridgeStatus.Connected
+                => (Color.FromRgb(76, 175, 80), "Linked", bridge.DeviceName ?? "(unnamed)"),
+            BuddyBridge.BridgeStatus.Connecting
+                => (Color.FromRgb(255, 180, 0), "Connecting", "…"),
+            BuddyBridge.BridgeStatus.Scanning
+                => (Color.FromRgb(255, 180, 0), "Scanning", "Looking for Claude Buddy…"),
+            BuddyBridge.BridgeStatus.Busy
+                => (Color.FromRgb(255, 100, 100), "Busy", "Linked to another app — tap to retry"),
+            BuddyBridge.BridgeStatus.Disabled
+                => (Color.FromArgb(102, 255, 255, 255), "Off", "Disabled in settings"),
+            _ => (Color.FromArgb(102, 255, 255, 255), "Off", "(not connected)")
+        };
+        BuddyDot.Fill = new SolidColorBrush(color);
+        BuddyLabel.Text = label;
+        BuddyDevice.Text = description;
+    }
+
+    private void OnBuddyReconnectClick(object sender, MouseButtonEventArgs e)
+    {
+        // Only re-scan when not already linked. Clicking the row while connected
+        // would otherwise drop the existing GATT link and trigger a needless reconnect
+        // (Buddy keeps showing 'linked' until its 30s heartbeat timeout fires).
+        if (App.BuddyBridge.Status != BuddyBridge.BridgeStatus.Connected
+            && App.BuddyBridge.Status != BuddyBridge.BridgeStatus.Connecting)
+        {
+            App.BuddyBridge.ReconnectNow();
+            RefreshBuddyMenuRow();
+        }
+        e.Handled = true;
+    }
+
+    private void OnBuddyBridgeChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            ApplyBuddyStatusColor();
+            if (ViewModel.CurrentContent == ViewModels.ContentType.Menu)
+                RefreshBuddyMenuRow();
+        });
+    }
+
+    /// Green crab when linked to Buddy, default orange otherwise.
+    private void ApplyBuddyStatusColor()
+    {
+        CrabIcon.BodyColor = App.BuddyBridge.Status == BuddyBridge.BridgeStatus.Connected
+            ? Color.FromRgb(76, 175, 80)                   // green
+            : Controls.CrabIcon.DefaultCrabColor;          // orange
+    }
+
+    // --- Star on GitHub ---
+    private void OnStarGitHubClick(object sender, MouseButtonEventArgs e)
+    {
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "https://github.com/Xefan/claude-island-windows",
+            UseShellExecute = true
+        });
+        e.Handled = true;
+    }
+
     // How far to translate the crab/spinner into the collapsed clip area
     private const double ActivityOffset = 140;
 
     // True while the close animation is running — suppresses direct position snapping
     private bool _isClosing;
 
-    /// Helper: clear any WPF animation hold then set a property directly.
+    /// Helper: set a property and clear any active animation hold.
+    /// IMPORTANT: set local value FIRST, then clear the animation. Doing it the other way round causes a
+    /// one-frame flicker where the value reverts to its XAML default (whatever was last set as the local value)
+    /// before the new value is applied. With that ordering, you see the spinner/crab "warp" through X=0.
     private static void SetValue(DependencyObject obj, DependencyProperty dp, double value)
     {
+        obj.SetValue(dp, value);
         if (obj is IAnimatable a)
             a.BeginAnimation(dp, null);
-        obj.SetValue(dp, value);
     }
 
     private void UpdateStatusIndicators()
@@ -413,37 +623,138 @@ public partial class NotchPanel : UserControl
     // --- Chat view ---
     private static readonly SolidColorBrush WhiteDot = new(Color.FromArgb(153, 255, 255, 255));
     private int _lastChatItemCount;
+    // Cache of rendered elements, keyed by item id — scoped per session
+    private readonly Dictionary<string, UIElement> _elementCache = new();
+    private string? _cachedSessionId;
+    private UIElement? _processingIndicator;
+    // First N messages render synchronously; the rest stream in on UI idle
+    private const int InitialRenderBatch = 20;
+    // Bumped on every LoadChatMessages — older background streams check this to bail out
+    private int _loadGeneration;
 
     private void LoadChatMessages(Models.SessionState session)
     {
+        // Bump generation so any in-flight StreamOlderMessages from a previous load bails out
+        var generation = ++_loadGeneration;
+
+        // Scope the cache to the current session — clear so stale parented elements
+        // don't get re-inserted (which would throw "already a child" exceptions)
+        if (_cachedSessionId != session.SessionId)
+        {
+            _elementCache.Clear();
+            _cachedSessionId = session.SessionId;
+        }
+
         ChatMessages.Children.Clear();
         var items = ConversationParser.Parse(session.SessionId, session.Cwd);
         _lastChatItemCount = items.Count;
-        foreach (var item in items) ChatMessages.Children.Add(CreateMessageElement(item));
+
+        var syncStart = Math.Max(0, items.Count - InitialRenderBatch);
+
+        for (int i = syncStart; i < items.Count; i++)
+            ChatMessages.Children.Add(GetOrCreateElement(items[i]));
+
         UpdateApprovalBar(session);
-        if (session.Phase.Kind is Models.SessionPhaseKind.Processing or Models.SessionPhaseKind.Compacting)
-            ChatMessages.Children.Add(CreateProcessingIndicator());
+        AddOrRemoveProcessingIndicator(session.Phase.Kind);
+
         Dispatcher.BeginInvoke(() => ChatScroller.ScrollToBottom(),
             System.Windows.Threading.DispatcherPriority.Loaded);
+
+        if (syncStart > 0)
+            StreamOlderMessages(items, syncStart, generation);
+
         _chatRefreshTimer?.Start();
+    }
+
+    private void StreamOlderMessages(List<ConversationParser.ChatItem> items, int beforeIndex, int generation)
+    {
+        int i = beforeIndex - 1;
+        void Step()
+        {
+            // Bail out if a newer load has started — our cached elements may have
+            // been re-parented by the new render path already
+            if (generation != _loadGeneration) return;
+            if (i < 0) return;
+
+            var element = GetOrCreateElement(items[i]);
+            // Defensive: if somehow this element already has a parent, skip it
+            if (element is FrameworkElement fe && fe.Parent != null)
+            {
+                i--;
+                if (i >= 0)
+                    Dispatcher.BeginInvoke((Action)Step,
+                        System.Windows.Threading.DispatcherPriority.Background);
+                return;
+            }
+
+            ChatMessages.Children.Insert(0, element);
+            i--;
+            if (i >= 0)
+                Dispatcher.BeginInvoke((Action)Step,
+                    System.Windows.Threading.DispatcherPriority.Background);
+        }
+        Dispatcher.BeginInvoke((Action)Step, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private void RefreshChatMessages(Models.SessionState session)
     {
         var items = ConversationParser.Parse(session.SessionId, session.Cwd);
-        if (items.Count == _lastChatItemCount) return;
-        _lastChatItemCount = items.Count;
-        ChatMessages.Children.Clear();
-        foreach (var item in items) ChatMessages.Children.Add(CreateMessageElement(item));
+
         var latest = App.SessionStore.GetSession(session.SessionId);
-        if (latest != null)
+        var phaseKind = latest?.Phase.Kind ?? session.Phase.Kind;
+
+        // Fast path: no new items — just update approval bar + processing indicator
+        if (items.Count == _lastChatItemCount)
         {
-            UpdateApprovalBar(latest);
-            if (latest.Phase.Kind is Models.SessionPhaseKind.Processing or Models.SessionPhaseKind.Compacting)
-                ChatMessages.Children.Add(CreateProcessingIndicator());
+            if (latest != null) UpdateApprovalBar(latest);
+            AddOrRemoveProcessingIndicator(phaseKind);
+            return;
         }
+
+        // Remove processing indicator if present so we append new messages below it
+        if (_processingIndicator != null)
+            ChatMessages.Children.Remove(_processingIndicator);
+
+        // Incrementally append new items (keep cached ones intact)
+        for (int i = _lastChatItemCount; i < items.Count; i++)
+            ChatMessages.Children.Add(GetOrCreateElement(items[i]));
+
+        _lastChatItemCount = items.Count;
+
+        if (latest != null) UpdateApprovalBar(latest);
+        AddOrRemoveProcessingIndicator(phaseKind);
+
         Dispatcher.BeginInvoke(() => ChatScroller.ScrollToBottom(),
             System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    private UIElement GetOrCreateElement(ConversationParser.ChatItem item)
+    {
+        // Tool calls may change state (IsCompleted / ToolResult appearing), so don't cache them
+        if (item.Type == ConversationParser.ItemType.ToolCall)
+            return CreateMessageElement(item);
+
+        if (_elementCache.TryGetValue(item.Id, out var cached))
+            return cached;
+
+        var created = CreateMessageElement(item);
+        _elementCache[item.Id] = created;
+        return created;
+    }
+
+    private void AddOrRemoveProcessingIndicator(Models.SessionPhaseKind phase)
+    {
+        var shouldShow = phase is Models.SessionPhaseKind.Processing or Models.SessionPhaseKind.Compacting;
+        if (shouldShow && _processingIndicator == null)
+        {
+            _processingIndicator = CreateProcessingIndicator();
+            ChatMessages.Children.Add(_processingIndicator);
+        }
+        else if (!shouldShow && _processingIndicator != null)
+        {
+            ChatMessages.Children.Remove(_processingIndicator);
+            _processingIndicator = null;
+        }
     }
 
     private void UpdateApprovalBar(Models.SessionState session)
@@ -555,13 +866,47 @@ public partial class NotchPanel : UserControl
             });
         }
 
-        // Edit tools: always show diff inline
+        // Edit tools: show a lazy diff — only compute LCS when the user expands
         if (item.ToolName == "Edit" && (item.OldString != null || item.NewString != null))
         {
+            var chevron = new TextBlock
+            {
+                Text = "›",
+                FontSize = 11,
+                Foreground = TerminalColors.Dimmer,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(6, 0, 0, 0)
+            };
+            header.Children.Add(chevron);
+            header.Cursor = Cursors.Hand;
+
+            var diffPlaceholder = new ContentControl { Margin = new Thickness(12, 4, 0, 2), Visibility = Visibility.Collapsed };
+            bool rendered = false;
+
+            header.MouseLeftButtonDown += (_, ev) =>
+            {
+                if (diffPlaceholder.Visibility == Visibility.Collapsed)
+                {
+                    if (!rendered)
+                    {
+                        diffPlaceholder.Content = CreateDiffView(
+                            item.OldString ?? "", item.NewString ?? "",
+                            item.FilePath != null ? System.IO.Path.GetFileName(item.FilePath) : null);
+                        rendered = true;
+                    }
+                    diffPlaceholder.Visibility = Visibility.Visible;
+                    chevron.Text = "\u2304";
+                }
+                else
+                {
+                    diffPlaceholder.Visibility = Visibility.Collapsed;
+                    chevron.Text = "\u203A";
+                }
+                ev.Handled = true;
+            };
+
             container.Children.Add(header);
-            container.Children.Add(CreateDiffView(
-                item.OldString ?? "", item.NewString ?? "",
-                item.FilePath != null ? System.IO.Path.GetFileName(item.FilePath) : null));
+            container.Children.Add(diffPlaceholder);
             container.MouseEnter += (_, _) => container.Background = new SolidColorBrush(Color.FromArgb(13, 255, 255, 255));
             container.MouseLeave += (_, _) => container.Background = Brushes.Transparent;
             return container;
@@ -569,7 +914,7 @@ public partial class NotchPanel : UserControl
 
         // Chevron for expandable tools (only completed, not Edit/Task)
         if (item.IsCompleted && !string.IsNullOrEmpty(item.ToolResult) &&
-            item.ToolName is not "Edit" and not "Task")
+            item.ToolName is not "Edit" and not "Task" and not "Agent")
         {
             var chevron = new TextBlock
             {

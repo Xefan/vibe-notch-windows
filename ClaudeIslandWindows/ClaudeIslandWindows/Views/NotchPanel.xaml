@@ -151,62 +151,189 @@
                     </ItemsControl>
                 </ScrollViewer>
 
-                <TextBlock Text="No active Claude sessions"
-                           Foreground="#404040" FontSize="13"
-                           HorizontalAlignment="Center" VerticalAlignment="Center"
-                           Visibility="{Binding Sessions.Count, Converter={StaticResource EmptyVisibility}}" />
+                <Grid Visibility="{Binding CurrentContent, Converter={StaticResource ContentVisibility}, ConverterParameter=Instances}">
+                    <TextBlock Text="No active Claude sessions"
+                               Foreground="#404040" FontSize="13"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               Visibility="{Binding Sessions.Count, Converter={StaticResource EmptyVisibility}}"
+                               IsHitTestVisible="False" />
+                </Grid>
 
-                <StackPanel Margin="0,8,0,0"
-                            Visibility="{Binding CurrentContent, Converter={StaticResource ContentVisibility}, ConverterParameter=Menu}">
-                    <TextBlock Text="Settings" FontSize="16" FontWeight="SemiBold"
-                               Foreground="#E0E0E0" Margin="0,0,0,8" />
-                    <Border CornerRadius="8" Padding="12,10"
-                            BorderThickness="1" Margin="0,0,0,4">
-                        <Border.Style>
-                            <Style TargetType="Border">
-                                <Setter Property="Background" Value="Transparent" />
-                                <Setter Property="BorderBrush" Value="Transparent" />
-                                <Style.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter Property="Background" Value="#1A1A1A" />
-                                        <Setter Property="BorderBrush" Value="Transparent" />
-                                    </Trigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Border.Style>
-                        <StackPanel>
-                            <TextBlock Text="Claude Code Hooks" FontSize="13" Foreground="#D0D0D0" />
-                            <TextBlock Text="Monitor sessions via hook events"
-                                       FontSize="11" Foreground="#606060" />
-                        </StackPanel>
-                    </Border>
-                    <Border CornerRadius="8" Padding="12,10"
-                            BorderThickness="1" Margin="0,0,0,4">
-                        <Border.Style>
-                            <Style TargetType="Border">
-                                <Setter Property="Background" Value="Transparent" />
-                                <Setter Property="BorderBrush" Value="Transparent" />
-                                <Style.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter Property="Background" Value="#1A1A1A" />
-                                        <Setter Property="BorderBrush" Value="Transparent" />
-                                    </Trigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Border.Style>
-                        <StackPanel>
-                            <TextBlock Text="Claude Island for Windows" FontSize="12" Foreground="#808080" />
-                            <TextBlock Text="v1.0.0" FontSize="11" Foreground="#505050" />
-                        </StackPanel>
-                    </Border>
-                    <Button x:Name="QuitButton" Content="Quit Claude Island"
-                            HorizontalAlignment="Stretch"
-                            Style="{StaticResource NotchButton}"
-                            Foreground="#CC4444"
-                            Padding="12,10" FontSize="13"
-                            HorizontalContentAlignment="Left"
-                            Click="OnQuitClick" />
-                </StackPanel>
+                <ScrollViewer Margin="0,4,0,0" VerticalScrollBarVisibility="Auto"
+                              Visibility="{Binding CurrentContent, Converter={StaticResource ContentVisibility}, ConverterParameter=Menu}">
+                    <StackPanel Margin="0,0,6,0">
+
+                        <!-- Notification Sound -->
+                        <Border x:Name="SoundRow" CornerRadius="8" Padding="12,10"
+                                Margin="0,2" Cursor="Hand"
+                                MouseLeftButtonDown="OnSoundRowClick"
+                                Style="{StaticResource MenuRowBorder}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE767;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                           Foreground="#B3FFFFFF" VerticalAlignment="Center"
+                                           Margin="0,0,10,0" />
+                                <TextBlock Grid.Column="1" Text="Notification Sound"
+                                           FontSize="13" FontWeight="Medium"
+                                           Foreground="#B3FFFFFF" VerticalAlignment="Center" />
+                                <TextBlock x:Name="SoundChevron" Grid.Column="2"
+                                           Text="&#x203A;" FontSize="14"
+                                           Foreground="#66FFFFFF" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+                        <Border x:Name="SoundPickerPanel" Visibility="Collapsed"
+                                Margin="0,0,0,2">
+                            <ScrollViewer MaxHeight="192" VerticalScrollBarVisibility="Auto">
+                                <StackPanel x:Name="SoundList" />
+                            </ScrollViewer>
+                        </Border>
+
+                        <!-- Launch at Login -->
+                        <Border x:Name="LaunchRow" CornerRadius="8" Padding="12,10"
+                                Margin="0,2" Cursor="Hand"
+                                MouseLeftButtonDown="OnLaunchAtLoginClick"
+                                Style="{StaticResource MenuRowBorder}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE7E8;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                           Foreground="#B3FFFFFF" VerticalAlignment="Center"
+                                           Margin="0,0,10,0" />
+                                <TextBlock Grid.Column="1" Text="Launch at Login"
+                                           FontSize="13" FontWeight="Medium"
+                                           Foreground="#B3FFFFFF" VerticalAlignment="Center" />
+                                <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                            VerticalAlignment="Center">
+                                    <Ellipse x:Name="LaunchDot" Width="6" Height="6"
+                                             Fill="#66FFFFFF" Margin="0,0,6,0" />
+                                    <TextBlock x:Name="LaunchLabel" Text="Off"
+                                               FontSize="11" Foreground="#66FFFFFF" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Hooks -->
+                        <Border x:Name="HooksRow" CornerRadius="8" Padding="12,10"
+                                Margin="0,2" Cursor="Hand"
+                                MouseLeftButtonDown="OnHooksToggleClick"
+                                Style="{StaticResource MenuRowBorder}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                           Foreground="#B3FFFFFF" VerticalAlignment="Center"
+                                           Margin="0,0,10,0" />
+                                <TextBlock Grid.Column="1" Text="Hooks"
+                                           FontSize="13" FontWeight="Medium"
+                                           Foreground="#B3FFFFFF" VerticalAlignment="Center" />
+                                <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                            VerticalAlignment="Center">
+                                    <Ellipse x:Name="HooksDot" Width="6" Height="6"
+                                             Fill="#4CAF50" Margin="0,0,6,0" />
+                                    <TextBlock x:Name="HooksLabel" Text="On"
+                                               FontSize="11" Foreground="#66FFFFFF" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Claude Buddy (BLE) -->
+                        <Border x:Name="BuddyRow" CornerRadius="8" Padding="12,10"
+                                Margin="0,2" Cursor="Hand"
+                                MouseLeftButtonDown="OnBuddyReconnectClick"
+                                Style="{StaticResource MenuRowBorder}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE702;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                           Foreground="#B3FFFFFF" VerticalAlignment="Center"
+                                           Margin="0,0,10,0" />
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="Claude Buddy"
+                                               FontSize="13" FontWeight="Medium"
+                                               Foreground="#B3FFFFFF" />
+                                    <TextBlock x:Name="BuddyDevice"
+                                               Text="(not connected)"
+                                               FontSize="11" Foreground="#66FFFFFF" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                            VerticalAlignment="Center">
+                                    <Ellipse x:Name="BuddyDot" Width="6" Height="6"
+                                             Fill="#66FFFFFF" Margin="0,0,6,0" />
+                                    <TextBlock x:Name="BuddyLabel" Text="Off"
+                                               FontSize="11" Foreground="#66FFFFFF" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Divider -->
+                        <Border Height="1" Background="#14FFFFFF" Margin="0,6" />
+
+                        <!-- Star on GitHub -->
+                        <Border CornerRadius="8" Padding="12,10"
+                                Margin="0,2" Cursor="Hand"
+                                MouseLeftButtonDown="OnStarGitHubClick"
+                                Style="{StaticResource MenuRowBorder}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE734;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                           Foreground="#B3FFFFFF" VerticalAlignment="Center"
+                                           Margin="0,0,10,0" />
+                                <TextBlock Grid.Column="1" Text="Star on GitHub"
+                                           FontSize="13" FontWeight="Medium"
+                                           Foreground="#B3FFFFFF" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+
+                        <!-- Version info -->
+                        <Border CornerRadius="8" Padding="12,8" Margin="0,2">
+                            <StackPanel>
+                                <TextBlock Text="Claude Island for Windows"
+                                           FontSize="12" Foreground="#66808080" />
+                                <TextBlock Text="v1.0.0"
+                                           FontSize="11" Foreground="#505050" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Divider -->
+                        <Border Height="1" Background="#14FFFFFF" Margin="0,6" />
+
+                        <!-- Quit -->
+                        <Border CornerRadius="8" Padding="12,10"
+                                Margin="0,2" Cursor="Hand"
+                                MouseLeftButtonDown="OnQuitClick"
+                                Style="{StaticResource MenuRowBorder}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                           Foreground="#FF6666" VerticalAlignment="Center"
+                                           Margin="0,0,10,0" />
+                                <TextBlock Grid.Column="1" Text="Quit Claude Island"
+                                           FontSize="13" FontWeight="Medium"
+                                           Foreground="#FF6666" VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+
+                    </StackPanel>
+                </ScrollViewer>
 
                 <Grid Margin="0,4,0,0"
                       Visibility="{Binding CurrentContent, Converter={StaticResource ContentVisibility}, ConverterParameter=Chat}">
