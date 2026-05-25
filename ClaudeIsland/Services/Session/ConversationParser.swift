@@ -9,6 +9,29 @@
 import Foundation
 import os.log
 
+/// Token usage information from a session
+struct UsageInfo: Equatable {
+    var inputTokens: Int = 0
+    var outputTokens: Int = 0
+    var cacheReadTokens: Int = 0
+    var cacheCreationTokens: Int = 0
+
+    var totalTokens: Int {
+        inputTokens + outputTokens
+    }
+
+    /// Formatted string for display (e.g., "12.5K tokens")
+    var formattedTotal: String {
+        let total = totalTokens
+        if total >= 1_000_000 {
+            return String(format: "%.1fM", Double(total) / 1_000_000)
+        } else if total >= 1_000 {
+            return String(format: "%.1fK", Double(total) / 1_000)
+        }
+        return "\(total)"
+    }
+}
+
 struct ConversationInfo: Equatable {
     let summary: String?
     let lastMessage: String?
@@ -16,6 +39,7 @@ struct ConversationInfo: Equatable {
     let lastToolName: String?  // Tool name if lastMessageRole is "tool"
     let firstUserMessage: String?  // Fallback title when no summary
     let lastUserMessageDate: Date?  // Timestamp of last user message (for stable sorting)
+    var usage: UsageInfo = UsageInfo()  // Token usage stats
 }
 
 actor ConversationParser {
@@ -23,6 +47,13 @@ actor ConversationParser {
 
     /// Logger for conversation parser (nonisolated static for cross-context access)
     nonisolated static let logger = Logger(subsystem: "com.claudeisland", category: "Parser")
+
+    /// Shared ISO8601 date formatter (expensive to create, reused across all message parsing)
+    nonisolated private static let isoFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     /// Cache of parsed conversation info, keyed by session file path
     private var cache: [String: CachedInfo] = [:]
@@ -73,7 +104,7 @@ actor ConversationParser {
     /// Uses caching based on file modification time
     func parse(sessionId: String, cwd: String) -> ConversationInfo {
         let projectDir = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
-        let sessionFile = NSHomeDirectory() + "/.claude/projects/" + projectDir + "/" + sessionId + ".jsonl"
+        let sessionFile = ClaudePaths.projectsDir.path + "/" + projectDir + "/" + sessionId + ".jsonl"
 
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: sessionFile),
@@ -107,9 +138,26 @@ actor ConversationParser {
         var lastToolName: String?
         var firstUserMessage: String?
         var lastUserMessageDate: Date?
+        var usage = UsageInfo()
 
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let formatter = Self.isoFormatter
+
+        // First pass: collect usage from all assistant messages
+        for line in lines {
+            guard let lineData = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
+                continue
+            }
+
+            if json["type"] as? String == "assistant",
+               let message = json["message"] as? [String: Any],
+               let usageDict = message["usage"] as? [String: Any] {
+                usage.inputTokens += usageDict["input_tokens"] as? Int ?? 0
+                usage.outputTokens += usageDict["output_tokens"] as? Int ?? 0
+                usage.cacheReadTokens += usageDict["cache_read_input_tokens"] as? Int ?? 0
+                usage.cacheCreationTokens += usageDict["cache_creation_input_tokens"] as? Int ?? 0
+            }
+        }
 
         for line in lines {
             guard let lineData = line.data(using: .utf8),
@@ -201,7 +249,8 @@ actor ConversationParser {
             lastMessageRole: lastMessageRole,
             lastToolName: lastToolName,
             firstUserMessage: firstUserMessage,
-            lastUserMessageDate: lastUserMessageDate
+            lastUserMessageDate: lastUserMessageDate,
+            usage: usage
         )
     }
 
@@ -226,7 +275,8 @@ actor ConversationParser {
             if let pattern = input["pattern"] as? String {
                 return pattern
             }
-        case "Task":
+        case "Task", "Agent":
+            // "Task" is the legacy name; Claude Code now uses "Agent"
             if let description = input["description"] as? String {
                 return description
             }
@@ -460,7 +510,29 @@ actor ConversationParser {
     /// Build session file path
     private static func sessionFilePath(sessionId: String, cwd: String) -> String {
         let projectDir = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
-        return NSHomeDirectory() + "/.claude/projects/" + projectDir + "/" + sessionId + ".jsonl"
+        return ClaudePaths.projectsDir.path + "/" + projectDir + "/" + sessionId + ".jsonl"
+    }
+
+    /// Build subagent JSONL file path.
+    ///
+    /// Current Claude Code nests subagent files under the parent session:
+    ///   projects/<project>/<sessionId>/subagents/agent-<agentId>.jsonl
+    ///
+    /// Older Claude Code versions stored them flat:
+    ///   projects/<project>/agent-<agentId>.jsonl
+    ///
+    /// Prefer the nested path; fall back to the flat path if only it exists
+    /// (cross-version compatibility). If neither exists yet (file still being
+    /// created) we return the nested path as the modern default.
+    nonisolated static func subagentFilePath(sessionId: String, agentId: String, projectDir: String) -> String {
+        let base = ClaudePaths.projectsDir.path + "/" + projectDir
+        let nested = base + "/" + sessionId + "/subagents/agent-" + agentId + ".jsonl"
+        let flat = base + "/agent-" + agentId + ".jsonl"
+
+        let fm = FileManager.default
+        if fm.fileExists(atPath: nested) { return nested }
+        if fm.fileExists(atPath: flat) { return flat }
+        return nested
     }
 
     private func parseMessageLine(_ json: [String: Any], seenToolIds: inout Set<String>, toolIdToName: inout [String: String]) -> ChatMessage? {
@@ -483,9 +555,7 @@ actor ConversationParser {
 
         let timestamp: Date
         if let timestampStr = json["timestamp"] as? String {
-            let formatter = ISO8601DateFormatter()
-            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            timestamp = formatter.date(from: timestampStr) ?? Date()
+            timestamp = Self.isoFormatter.date(from: timestampStr) ?? Date()
         } else {
             timestamp = Date()
         }
@@ -529,6 +599,13 @@ actor ConversationParser {
                     case "thinking":
                         if let thinking = block["thinking"] as? String {
                             blocks.append(.thinking(thinking))
+                        }
+                    case "image":
+                        // Claude Code stores inline images as base64 with media_type.
+                        if let source = block["source"] as? [String: Any],
+                           let mediaType = source["media_type"] as? String,
+                           let data = source["data"] as? String {
+                            blocks.append(.image(ImageBlock(mediaType: mediaType, base64Data: data)))
                         }
                     default:
                         break
@@ -580,12 +657,12 @@ actor ConversationParser {
         isError: Bool
     ) -> ToolResultData {
         if toolName.hasPrefix("mcp__") {
-            let parts = toolName.dropFirst(5).split(separator: "_", maxSplits: 2)
-            let serverName = parts.count > 0 ? String(parts[0]) : "unknown"
-            let mcpToolName = parts.count > 1 ? String(parts[1].dropFirst()) : toolName
+            let parts = String(toolName.dropFirst(5)).components(separatedBy: "__")
+            let serverName = parts.first.flatMap { $0.isEmpty ? nil : $0 } ?? "unknown"
+            let mcpToolName = parts.dropFirst().joined(separator: "__")
             return .mcp(MCPResult(
                 serverName: serverName,
-                toolName: mcpToolName,
+                toolName: mcpToolName.isEmpty ? toolName : mcpToolName,
                 rawResult: toolUseResult
             ))
         }
@@ -605,7 +682,7 @@ actor ConversationParser {
             return parseGlobResult(toolUseResult)
         case "TodoWrite":
             return parseTodoWriteResult(toolUseResult)
-        case "Task":
+        case "Task", "Agent":
             return parseTaskResult(toolUseResult)
         case "WebFetch":
             return parseWebFetchResult(toolUseResult)
@@ -884,11 +961,11 @@ actor ConversationParser {
     // MARK: - Subagent Tools Parsing
 
     /// Parse subagent tools from an agent JSONL file
-    func parseSubagentTools(agentId: String, cwd: String) -> [SubagentToolInfo] {
+    func parseSubagentTools(sessionId: String, agentId: String, cwd: String) -> [SubagentToolInfo] {
         guard !agentId.isEmpty else { return [] }
 
         let projectDir = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
-        let agentFile = NSHomeDirectory() + "/.claude/projects/" + projectDir + "/agent-" + agentId + ".jsonl"
+        let agentFile = Self.subagentFilePath(sessionId: sessionId, agentId: agentId, projectDir: projectDir)
 
         guard FileManager.default.fileExists(atPath: agentFile),
               let content = try? String(contentsOfFile: agentFile, encoding: .utf8) else {
@@ -976,11 +1053,11 @@ struct SubagentToolInfo: Sendable {
 
 extension ConversationParser {
     /// Parse subagent tools from an agent JSONL file (static, synchronous version)
-    nonisolated static func parseSubagentToolsSync(agentId: String, cwd: String) -> [SubagentToolInfo] {
+    nonisolated static func parseSubagentToolsSync(sessionId: String, agentId: String, cwd: String) -> [SubagentToolInfo] {
         guard !agentId.isEmpty else { return [] }
 
         let projectDir = cwd.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ".", with: "-")
-        let agentFile = NSHomeDirectory() + "/.claude/projects/" + projectDir + "/agent-" + agentId + ".jsonl"
+        let agentFile = subagentFilePath(sessionId: sessionId, agentId: agentId, projectDir: projectDir)
 
         guard FileManager.default.fileExists(atPath: agentFile),
               let content = try? String(contentsOfFile: agentFile, encoding: .utf8) else {
@@ -1054,4 +1131,3 @@ extension ConversationParser {
         return tools
     }
 }
-

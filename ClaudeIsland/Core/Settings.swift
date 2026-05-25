@@ -38,6 +38,7 @@ enum AppSettings {
 
     private enum Keys {
         static let notificationSound = "notificationSound"
+        static let claudeDirectoryName = "claudeDirectoryName"
     }
 
     // MARK: - Notification Sound
@@ -53,6 +54,21 @@ enum AppSettings {
         }
         set {
             defaults.set(newValue.rawValue, forKey: Keys.notificationSound)
+        }
+    }
+
+    // MARK: - Claude Directory
+
+    /// The name of the Claude config directory under the user's home folder.
+    /// Defaults to ".claude" (standard Claude Code installation).
+    /// Change to ".claude-internal" (or similar) for enterprise/custom distributions.
+    static var claudeDirectoryName: String {
+        get {
+            let value = defaults.string(forKey: Keys.claudeDirectoryName) ?? ""
+            return value.isEmpty ? ".claude" : value
+        }
+        set {
+            defaults.set(newValue.trimmingCharacters(in: .whitespaces), forKey: Keys.claudeDirectoryName)
         }
     }
 }

@@ -284,11 +284,13 @@ struct NotchView: View {
                     ProcessingSpinner()
                         .matchedGeometryEffect(id: "spinner", in: activityNamespace, isSource: showClosedActivity)
                         .frame(width: viewModel.status == .opened ? 20 : sideWidth)
+                        .padding(.trailing, viewModel.status == .opened ? 0 : 4)
                 } else if hasWaitingForInput {
                     // Checkmark for waiting-for-input on the right side
                     ReadyForInputIndicatorIcon(size: 14, color: TerminalColors.green)
                         .matchedGeometryEffect(id: "spinner", in: activityNamespace, isSource: showClosedActivity)
                         .frame(width: viewModel.status == .opened ? 20 : sideWidth)
+                        .padding(.trailing, viewModel.status == .opened ? 0 : 4)
                 }
             }
         }
@@ -363,10 +365,15 @@ struct NotchView: View {
                     sessionMonitor: sessionMonitor,
                     viewModel: viewModel
                 )
+                // Force a fresh ChatView when switching sessions — otherwise
+                // @State (history, session, scroll position) leaks from the
+                // previous session and the view shows the wrong conversation.
+                // Keyed on sessionId only (not the whole SessionState) so
+                // per-event updates still reuse the view.
+                .id(session.sessionId)
             }
         }
         .frame(width: notchSize.width - 24) // Fixed width to prevent text reflow
-        // Removed .id() - was causing view recreation and performance issues
     }
 
     // MARK: - Event Handlers

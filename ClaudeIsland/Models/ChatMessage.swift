@@ -6,6 +6,17 @@
 //
 
 import Foundation
+import CryptoKit
+
+/// Produces a stable hex hash string that is consistent across app launches.
+/// Swift's hashValue is randomized per process, making it unsuitable for identifiers.
+enum StableHash {
+    static func hash(_ string: Substring) -> String {
+        let data = Data(string.utf8)
+        let digest = SHA256.hash(data: data)
+        return digest.compactMap { String(format: "%02x", $0) }.prefix(8).joined()
+    }
+}
 
 struct ChatMessage: Identifiable, Equatable {
     let id: String
@@ -38,16 +49,19 @@ enum MessageBlock: Equatable, Identifiable {
     case text(String)
     case toolUse(ToolUseBlock)
     case thinking(String)
+    case image(ImageBlock)
     case interrupted
 
     var id: String {
         switch self {
         case .text(let text):
-            return "text-\(text.prefix(20).hashValue)"
+            return "text-\(StableHash.hash(text.prefix(100)))"
         case .toolUse(let block):
             return "tool-\(block.id)"
         case .thinking(let text):
-            return "thinking-\(text.prefix(20).hashValue)"
+            return "thinking-\(StableHash.hash(text.prefix(100)))"
+        case .image(let block):
+            return "image-\(block.id)"
         case .interrupted:
             return "interrupted"
         }
@@ -59,8 +73,23 @@ enum MessageBlock: Equatable, Identifiable {
         case .text: return "text"
         case .toolUse: return "tool"
         case .thinking: return "thinking"
+        case .image: return "image"
         case .interrupted: return "interrupted"
         }
+    }
+}
+
+/// Represents an inline image attached to a message — base64-encoded with a
+/// media type (e.g. "image/png"). Claude Code stores these both as top-level
+/// user message blocks and nested inside tool_result content arrays.
+struct ImageBlock: Equatable {
+    let mediaType: String
+    let base64Data: String
+
+    /// Stable identifier based on the data contents so SwiftUI doesn't
+    /// re-render images unnecessarily across parses.
+    var id: String {
+        StableHash.hash(base64Data.prefix(200))
     }
 }
 

@@ -42,7 +42,7 @@ class AgentFileWatcher {
 
         let projectDir = cwd.replacingOccurrences(of: "/", with: "-")
                             .replacingOccurrences(of: ".", with: "-")
-        self.filePath = NSHomeDirectory() + "/.claude/projects/" + projectDir + "/agent-" + agentId + ".jsonl"
+        self.filePath = ConversationParser.subagentFilePath(sessionId: sessionId, agentId: agentId, projectDir: projectDir)
     }
 
     /// Start watching the agent file
@@ -95,7 +95,7 @@ class AgentFileWatcher {
     }
 
     private func parseTools() {
-        let tools = ConversationParser.parseSubagentToolsSync(agentId: agentId, cwd: cwd)
+        let tools = ConversationParser.parseSubagentToolsSync(sessionId: sessionId, agentId: agentId, cwd: cwd)
 
         let newTools = tools.filter { !seenToolIds.contains($0.id) }
         guard !newTools.isEmpty || tools.count != seenToolIds.count else { return }

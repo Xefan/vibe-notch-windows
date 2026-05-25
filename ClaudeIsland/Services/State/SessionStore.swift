@@ -30,6 +30,12 @@ actor SessionStore {
     /// Sync debounce interval (100ms)
     private let syncDebounceNs: UInt64 = 100_000_000
 
+    /// Periodic status check task
+    private var statusCheckTask: Task<Void, Never>?
+
+    /// Status check interval (3 seconds)
+    private let statusCheckIntervalSeconds: UInt64 = 3
+
     // MARK: - Published State (for UI)
 
     /// Publisher for session state changes (nonisolated for Combine subscription from any context)
@@ -189,7 +195,7 @@ actor SessionStore {
 
                 // Skip creating top-level placeholder for subagent tools
                 // They'll appear under their parent Task instead
-                let isSubagentTool = session.subagentState.hasActiveSubagent && toolName != "Task"
+                let isSubagentTool = session.subagentState.hasActiveSubagent && !ToolCallItem.isSubagentContainerName(toolName)
                 if isSubagentTool {
                     return
                 }
@@ -254,15 +260,52 @@ actor SessionStore {
     private func processSubagentTracking(event: HookEvent, session: inout SessionState) {
         switch event.event {
         case "PreToolUse":
-            if event.tool == "Task", let toolUseId = event.toolUseId {
+            if ToolCallItem.isSubagentContainerName(event.tool), let toolUseId = event.toolUseId {
                 let description = event.toolInput?["description"]?.value as? String
                 session.subagentState.startTask(taskToolId: toolUseId, description: description)
-                Self.logger.debug("Started Task subagent tracking: \(toolUseId.prefix(12), privacy: .public)")
+                Self.logger.debug("Started Task/Agent subagent tracking: \(toolUseId.prefix(12), privacy: .public)")
+            } else if let toolName = event.tool,
+                      let toolUseId = event.toolUseId,
+                      session.subagentState.hasActiveSubagent {
+                // A subagent's inner tool is starting. Add it to the parent Task/Agent's
+                // subagent list and sync to chatItems so the UI updates live (rather
+                // than only after the parent Agent completes).
+                var input: [String: String] = [:]
+                if let hookInput = event.toolInput {
+                    for (key, value) in hookInput {
+                        if let str = value.value as? String {
+                            input[key] = str
+                        } else if let num = value.value as? Int {
+                            input[key] = String(num)
+                        } else if let bool = value.value as? Bool {
+                            input[key] = bool ? "true" : "false"
+                        }
+                    }
+                }
+                let subagentTool = SubagentToolCall(
+                    id: toolUseId,
+                    name: toolName,
+                    input: input,
+                    status: .running,
+                    timestamp: Date()
+                )
+                session.subagentState.addSubagentTool(subagentTool)
+                syncSubagentToolsToChatItems(session: &session)
             }
 
         case "PostToolUse":
-            if event.tool == "Task" {
-                Self.logger.debug("PostToolUse for Task received (subagent still running)")
+            if ToolCallItem.isSubagentContainerName(event.tool), let toolUseId = event.toolUseId {
+                // Agent tool returned — the subagent has finished. Stop
+                // tracking so subsequent tools in the parent turn don't get
+                // attached to this dead task.
+                session.subagentState.stopTask(taskToolId: toolUseId)
+                Self.logger.debug("Stopped subagent tracking for \(toolUseId.prefix(12), privacy: .public)")
+            } else if let toolUseId = event.toolUseId,
+                      session.subagentState.hasActiveSubagent {
+                // A subagent's inner tool completed. Update its status in the
+                // parent's subagent list and sync.
+                session.subagentState.updateSubagentToolStatus(toolId: toolUseId, status: .success)
+                syncSubagentToolsToChatItems(session: &session)
             }
 
         case "SubagentStop":
@@ -272,6 +315,26 @@ actor SessionStore {
 
         default:
             break
+        }
+    }
+
+    /// Push the current subagent tool lists from subagentState into the
+    /// corresponding ChatHistoryItem.subagentTools so the UI renders them live.
+    private func syncSubagentToolsToChatItems(session: inout SessionState) {
+        for (taskToolId, context) in session.subagentState.activeTasks {
+            guard !context.subagentTools.isEmpty else { continue }
+            for i in 0..<session.chatItems.count {
+                if session.chatItems[i].id == taskToolId,
+                   case .toolCall(var tool) = session.chatItems[i].type {
+                    tool.subagentTools = context.subagentTools
+                    session.chatItems[i] = ChatHistoryItem(
+                        id: taskToolId,
+                        type: .toolCall(tool),
+                        timestamp: session.chatItems[i].timestamp
+                    )
+                    break
+                }
+            }
         }
     }
 
@@ -507,7 +570,7 @@ actor SessionStore {
                     switch block {
                     case .toolUse(let tool):
                         validIds.insert(tool.id)
-                    case .text, .thinking, .interrupted:
+                    case .text, .thinking, .image, .interrupted:
                         let itemId = "\(message.id)-\(block.typePrefix)-\(blockIndex)"
                         validIds.insert(itemId)
                     }
@@ -619,6 +682,7 @@ actor SessionStore {
         session.toolTracker.lastSyncTime = Date()
 
         await populateSubagentToolsFromAgentFiles(
+            sessionId: payload.sessionId,
             session: &session,
             cwd: payload.cwd,
             structuredResults: payload.structuredResults
@@ -635,15 +699,16 @@ actor SessionStore {
         )
     }
 
-    /// Populate subagent tools for Task tools using their agent JSONL files
+    /// Populate subagent tools for Task/Agent tools using their agent JSONL files
     private func populateSubagentToolsFromAgentFiles(
+        sessionId: String,
         session: inout SessionState,
         cwd: String,
         structuredResults: [String: ToolResultData]
     ) async {
         for i in 0..<session.chatItems.count {
             guard case .toolCall(var tool) = session.chatItems[i].type,
-                  tool.name == "Task",
+                  tool.isSubagentContainer,
                   let structuredResult = structuredResults[session.chatItems[i].id],
                   case .task(let taskResult) = structuredResult,
                   !taskResult.agentId.isEmpty else { continue }
@@ -658,6 +723,7 @@ actor SessionStore {
             }
 
             let subagentToolInfos = await ConversationParser.shared.parseSubagentTools(
+                sessionId: sessionId,
                 agentId: taskResult.agentId,
                 cwd: cwd
             )
@@ -725,6 +791,12 @@ actor SessionStore {
             let itemId = "\(message.id)-text-\(blockIndex)"
             guard !existingIds.contains(itemId) else { return nil }
 
+            // Skip empty text blocks — assistant turns with only tool calls
+            // produce empty text blocks that would render as orphan dots/gaps.
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+
             if message.role == .user {
                 return ChatHistoryItem(id: itemId, type: .user(text), timestamp: message.timestamp)
             } else {
@@ -765,7 +837,19 @@ actor SessionStore {
         case .thinking(let text):
             let itemId = "\(message.id)-thinking-\(blockIndex)"
             guard !existingIds.contains(itemId) else { return nil }
+
+            // Skip empty thinking blocks — streaming can briefly produce empty
+            // ones that would render as orphan grey dots.
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+
             return ChatHistoryItem(id: itemId, type: .thinking(text), timestamp: message.timestamp)
+
+        case .image(let imageBlock):
+            let itemId = "\(message.id)-image-\(blockIndex)"
+            guard !existingIds.contains(itemId) else { return nil }
+            return ChatHistoryItem(id: itemId, type: .image(imageBlock), timestamp: message.timestamp)
 
         case .interrupted:
             let itemId = "\(message.id)-interrupted-\(blockIndex)"
@@ -958,6 +1042,75 @@ actor SessionStore {
     private func cancelPendingSync(sessionId: String) {
         pendingSyncs[sessionId]?.cancel()
         pendingSyncs.removeValue(forKey: sessionId)
+    }
+
+    // MARK: - Periodic Status Check
+
+    /// Start periodic status checking for all sessions
+    func startPeriodicStatusCheck() {
+        guard statusCheckTask == nil else { return }
+
+        let intervalSeconds = statusCheckIntervalSeconds
+        statusCheckTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: intervalSeconds * 1_000_000_000)
+                guard !Task.isCancelled else { break }
+                await self?.recheckAllSessions()
+            }
+        }
+        Self.logger.info("Started periodic status check (every \(intervalSeconds)s)")
+    }
+
+    /// Stop periodic status checking
+    func stopPeriodicStatusCheck() {
+        statusCheckTask?.cancel()
+        statusCheckTask = nil
+        Self.logger.info("Stopped periodic status check")
+    }
+
+    /// Recheck status of all active sessions
+    private func recheckAllSessions() {
+        var removedSession = false
+
+        for (sessionId, session) in Array(sessions) {
+            if session.phase == .ended {
+                sessions.removeValue(forKey: sessionId)
+                cancelPendingSync(sessionId: sessionId)
+                removedSession = true
+                continue
+            }
+
+            if let pid = session.pid {
+                let isRunning = isProcessRunning(pid: pid)
+                if !isRunning {
+                    Self.logger.info("Process \(pid) no longer running, ending session \(sessionId.prefix(8))")
+                    sessions.removeValue(forKey: sessionId)
+                    cancelPendingSync(sessionId: sessionId)
+                    removedSession = true
+                    continue
+                }
+            }
+
+            let needsSync: Bool
+            switch session.phase {
+            case .processing, .waitingForApproval:
+                needsSync = true
+            default:
+                needsSync = false
+            }
+            if needsSync {
+                scheduleFileSync(sessionId: sessionId, cwd: session.cwd)
+            }
+        }
+
+        if removedSession {
+            publishState()
+        }
+    }
+
+    /// Check if a process is still running
+    private nonisolated func isProcessRunning(pid: Int) -> Bool {
+        return kill(Int32(pid), 0) == 0
     }
 
     // MARK: - State Publishing
