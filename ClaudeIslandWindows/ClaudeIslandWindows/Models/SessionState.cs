@@ -11,6 +11,9 @@ public sealed class SessionState
     public string? LastToolName { get; set; }
     public DateTime LastActivity { get; set; } = DateTime.UtcNow;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    /// True once this session has received a UserPromptSubmit event.
+    /// Main sessions always have one; subagents don't.
+    public bool HasUserPrompt { get; set; }
 
     public static string DeriveProjectName(string cwd)
     {

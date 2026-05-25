@@ -12,8 +12,7 @@ namespace ClaudeIslandWindows.Controls;
 /// </summary>
 public class CrabIcon : Canvas
 {
-    private static readonly Color CrabColor = Color.FromRgb(217, 120, 87); // Claude orange
-    private static readonly Brush CrabBrush = new SolidColorBrush(CrabColor);
+    public static readonly Color DefaultCrabColor = Color.FromRgb(217, 120, 87); // Claude orange
     private static readonly Brush EyeBrush = Brushes.Black;
 
     private readonly Rectangle[] _legs = new Rectangle[4];
@@ -33,6 +32,18 @@ public class CrabIcon : Canvas
         get => (bool)GetValue(IsAnimatingProperty);
         set => SetValue(IsAnimatingProperty, value);
     }
+
+    public static readonly DependencyProperty BodyColorProperty =
+        DependencyProperty.Register(nameof(BodyColor), typeof(Color),
+            typeof(CrabIcon), new PropertyMetadata(DefaultCrabColor, OnBodyColorChanged));
+
+    public Color BodyColor
+    {
+        get => (Color)GetValue(BodyColorProperty);
+        set => SetValue(BodyColorProperty, value);
+    }
+
+    private SolidColorBrush _crabBrush = new(DefaultCrabColor);
 
     public CrabIcon()
     {
@@ -61,6 +72,15 @@ public class CrabIcon : Canvas
         }
     }
 
+    private static void OnBodyColorChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is CrabIcon icon)
+        {
+            icon._crabBrush = new SolidColorBrush((Color)e.NewValue);
+            icon.DrawCrab();
+        }
+    }
+
     private void DrawCrab()
     {
         Children.Clear();
@@ -68,13 +88,13 @@ public class CrabIcon : Canvas
         var sy = Height / OrigH;
 
         // Body: (6, 0, 54, 39)
-        AddRect(6, 0, 54, 39, CrabBrush, sx, sy);
+        AddRect(6, 0, 54, 39, _crabBrush, sx, sy);
 
         // Left antenna: (0, 13, 6, 13)
-        AddRect(0, 13, 6, 13, CrabBrush, sx, sy);
+        AddRect(0, 13, 6, 13, _crabBrush, sx, sy);
 
         // Right antenna: (60, 13, 6, 13)
-        AddRect(60, 13, 6, 13, CrabBrush, sx, sy);
+        AddRect(60, 13, 6, 13, _crabBrush, sx, sy);
 
         // Left eye: (12, 13, 6, 6.5)
         AddRect(12, 13, 6, 6.5, EyeBrush, sx, sy);
@@ -88,7 +108,7 @@ public class CrabIcon : Canvas
         {
             var leg = new Rectangle
             {
-                Fill = CrabBrush,
+                Fill = _crabBrush,
                 Width = 6 * sx,
                 Height = 13 * sy
             };

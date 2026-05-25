@@ -170,7 +170,7 @@ public sealed class ConversationParser
                 "Bash" => input.TryGetProperty("command", out var cmd) ? Truncate(cmd.GetString() ?? "", 80) : "",
                 "Glob" => input.TryGetProperty("pattern", out var pat) ? pat.GetString() ?? "" : "",
                 "Grep" => input.TryGetProperty("pattern", out var gp) ? gp.GetString() ?? "" : "",
-                "Agent" => input.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "",
+                "Agent" or "Task" => input.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "",
                 "WebSearch" => input.TryGetProperty("query", out var q) ? q.GetString() ?? "" : "",
                 "WebFetch" => input.TryGetProperty("url", out var url) ? url.GetString() ?? "" : "",
                 _ => ""

@@ -88,7 +88,8 @@ public static class HookInstaller
         var command = $"powershell -ExecutionPolicy Bypass -NoProfile -File \"{ScriptPath}\"";
         var hooks = root["hooks"]?.AsObject() ?? new JsonObject();
 
-        var hookEvents = new (string name, JsonArray config)[]
+        // Baseline events supported by every Claude Code version with hooks
+        var hookList = new List<(string name, JsonArray config)>
         {
             ("UserPromptSubmit", MakeConfig(command, null, null)),
             ("PreToolUse", MakeConfig(command, "*", null)),
@@ -101,6 +102,25 @@ public static class HookInstaller
             ("SessionEnd", MakeConfig(command, null, null)),
             ("PreCompact", MakePreCompactConfig(command)),
         };
+
+        // Register newer events only if the installed Claude Code supports them.
+        // Claude Code rejects unknown keys, so we gate on version.
+        var version = DetectClaudeCodeVersion();
+        if (version is { } v)
+        {
+            if (v >= new Version(2, 0, 0))
+                hookList.Add(("PostToolUseFailure", MakeConfig(command, "*", null)));
+            if (v >= new Version(2, 0, 43))
+                hookList.Add(("SubagentStart", MakeConfig(command, null, null)));
+            if (v >= new Version(2, 1, 76))
+                hookList.Add(("PostCompact", MakePreCompactConfig(command)));
+            if (v >= new Version(2, 1, 78))
+                hookList.Add(("StopFailure", MakeConfig(command, null, null)));
+            if (v >= new Version(2, 1, 88))
+                hookList.Add(("PermissionDenied", MakeConfig(command, "*", null)));
+        }
+
+        var hookEvents = hookList.ToArray();
 
         foreach (var (name, config) in hookEvents)
         {
@@ -151,6 +171,33 @@ public static class HookInstaller
                 File.WriteAllText(SettingsPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { }
+    }
+
+    private static Version? DetectClaudeCodeVersion()
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "claude",
+                Arguments = "--version",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var p = System.Diagnostics.Process.Start(psi);
+            if (p == null) return null;
+            if (!p.WaitForExit(3000)) { try { p.Kill(); } catch { } return null; }
+            var output = p.StandardOutput.ReadToEnd();
+            // Match X.Y.Z anywhere in the output
+            var m = System.Text.RegularExpressions.Regex.Match(output, @"(\d+)\.(\d+)\.(\d+)");
+            if (!m.Success) return null;
+            return new Version(
+                int.Parse(m.Groups[1].Value),
+                int.Parse(m.Groups[2].Value),
+                int.Parse(m.Groups[3].Value));
+        }
+        catch { return null; }
     }
 
     private static JsonArray MakeConfig(string command, string? matcher, int? timeout)

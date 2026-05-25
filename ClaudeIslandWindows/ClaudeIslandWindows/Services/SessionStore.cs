@@ -9,12 +9,28 @@ public sealed class SessionStore
 
     public event Action? SessionsChanged;
 
+    // If a session has been in Processing/Compacting without any events for this long,
+    // treat it as a zombie (crashed Claude Code instance that never fired SessionEnd).
+    private static readonly TimeSpan StaleProcessingTimeout = TimeSpan.FromMinutes(2);
+
     public List<SessionState> GetSessions()
     {
         lock (_lock)
         {
+            // Demote stale processing sessions to Idle so they don't pin IsProcessing=true
+            var now = DateTime.UtcNow;
+            foreach (var s in _sessions.Values)
+            {
+                if (s.Phase.Kind is SessionPhaseKind.Processing or SessionPhaseKind.Compacting
+                    && now - s.LastActivity > StaleProcessingTimeout)
+                {
+                    s.Phase = SessionPhase.Idle;
+                }
+            }
+
             return _sessions.Values
                 .Where(s => s.Phase.Kind != SessionPhaseKind.Ended)
+                .Where(s => s.HasUserPrompt) // exclude subagent sessions
                 .OrderBy(s => s.SortPriority)
                 .ThenByDescending(s => s.LastActivity)
                 .ToList();
@@ -80,8 +96,23 @@ public sealed class SessionStore
         var newPhase = hookEvent.DeterminePhase();
         if (!session.Phase.CanTransition(newPhase)) return;
 
+        // Track whether this session has ever received a UserPromptSubmit
+        // (main sessions have; subagents don't — they're spawned via tool calls)
+        if (hookEvent.Event == "UserPromptSubmit")
+            session.HasUserPrompt = true;
+
+        var oldPhase = session.Phase.Kind;
         session.Phase = newPhase;
         session.LastActivity = DateTime.UtcNow;
+
+        // Play notification sound on transitions that need user attention
+        // (only for main sessions — subagent state changes shouldn't notify)
+        if (session.HasUserPrompt &&
+            oldPhase != newPhase.Kind &&
+            newPhase.Kind is SessionPhaseKind.WaitingForApproval or SessionPhaseKind.WaitingForInput)
+        {
+            SoundPlayer.PlayCurrent();
+        }
 
         if (!string.IsNullOrEmpty(hookEvent.Cwd))
         {

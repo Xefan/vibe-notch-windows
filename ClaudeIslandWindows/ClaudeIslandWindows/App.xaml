@@ -14,7 +14,7 @@
         <views:SpinnerVisibilityConverter x:Key="SpinnerVisConverter" />
         <views:DotVisibilityConverter x:Key="DotVisConverter" />
 
-        <!-- Minimal scrollbar: small grey handle, no track -->
+        <!-- Minimal scrollbar: small grey handle, no track. Vertical-only (this app has no horizontal scrollers). -->
         <Style TargetType="ScrollBar">
             <Setter Property="Width" Value="8" />
             <Setter Property="MinWidth" Value="8" />
@@ -23,7 +23,15 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ScrollBar">
                         <Grid Margin="0,8,0,24">
-                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <!-- Orientation must be explicit; default is Horizontal which breaks thumb tracking on a vertical scrollbar.
+                                 IsDirectionReversed=True is correct for vertical: Track Value 0 maps to thumb at top. -->
+                            <Track x:Name="PART_Track"
+                                   Orientation="Vertical"
+                                   IsDirectionReversed="True"
+                                   ViewportSize="{TemplateBinding ViewportSize}"
+                                   Minimum="{TemplateBinding Minimum}"
+                                   Maximum="{TemplateBinding Maximum}"
+                                   Value="{Binding Value, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
                                 <Track.Thumb>
                                     <Thumb>
                                         <Thumb.Template>
@@ -41,6 +49,16 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+
+        <!-- Menu row hover style -->
+        <Style x:Key="MenuRowBorder" TargetType="Border">
+            <Setter Property="Background" Value="Transparent" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#14FFFFFF" />
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <!-- Global button style: black bg, no border, grey bg+border on hover -->
