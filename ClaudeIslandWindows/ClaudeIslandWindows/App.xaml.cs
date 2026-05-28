@@ -30,6 +30,7 @@ public partial class App : Application
             return;
         }
 
+        StartupManager.SyncIfEnabled();
         HookInstaller.InstallIfNeeded();
         PipeServer.Start(OnHookEvent);
         BuddyBridge.Start();
